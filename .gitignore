@@ -1,0 +1,9 @@
+node_modules/
+.clasp.json
+.clasprc.json
+*.log
+.DS_Store
+# never commit backups or exports of your financial data
+wealth-os-backup-*.json
+wealth-report-*.xlsx
+transactions-*.csv

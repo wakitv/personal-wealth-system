@@ -1,0 +1,14 @@
+{
+  "name": "personal-wealth-os",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal portfolio tracker & wealth planner — GitHub Pages frontend, Google Apps Script + Sheets backend.",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "check": "node scripts/build.js --check",
+    "test": "node scripts/build.js --check && node --test tests/*.test.js",
+    "serve": "node scripts/serve.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

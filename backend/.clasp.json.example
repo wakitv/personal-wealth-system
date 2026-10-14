@@ -1,0 +1,5 @@
+{
+  "scriptId": "PASTE_YOUR_SCRIPT_ID",
+  "rootDir": ".",
+  "filePushOrder": ["Core.gs", "Service.gs", "Config.gs", "Auth.gs", "SheetStore.gs", "Code.gs", "Setup.gs", "Snapshots.gs"]
+}
