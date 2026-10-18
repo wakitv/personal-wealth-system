@@ -249,6 +249,81 @@ export function assetTxForm(type, defaults = {}, editing = null) {
   });
 }
 
+/**
+ * Record a holding — one form for every way you come to own an asset:
+ *   BUY_CASH     bought with cash already recorded in the chosen account   → BUY
+ *   BUY_OUTSIDE  bought with money from outside the app (bank card, etc.)  → BUY + linked deposit
+ *   OWNED        already owned before using the app / received elsewhere   → ADD_POSITION
+ */
+const HOLD_MODES = [
+  ['BUY_CASH', 'Bought with cash in this account', 'Uses the account\'s recorded cash balance.'],
+  ['BUY_OUTSIDE', 'Bought with money from outside the app', 'Records the incoming money and the purchase together (e.g. paid by card or bank transfer).'],
+  ['OWNED', 'Already owned / received', 'Holdings you had before using the app, or received from elsewhere. Enter what you paid so profit is measured correctly.']
+];
+export function holdingForm(defaults = {}) {
+  const requestId = uid('req');
+  const cls = defaults.asset_class || store.asset(defaults.asset_id)?.asset_class;
+  const assets = assetOptions(cls);
+  const noun = cls === 'STOCK' ? 'stock' : cls === 'OTHER' ? 'asset' : cls === 'CRYPTO' ? 'coin' : 'asset';
+  const startMode = defaults.mode || 'BUY_OUTSIDE';
+  const body = html`
+    ${row(html`<div class="field"><span>Asset</span><div class="inline-pick">${select('asset_id', assets, defaults.asset_id, { required: true, label: 'Asset' })}<button type="button" class="btn sm ghost" data-new-asset title="Add a ${noun} that isn't in the list">${F.icon('plus')} New</button></div></div>`,
+          field('Held in account', select('account_id', accountOptions(), defaults.account_id, { required: true, label: 'Account' })))}
+    <div class="avail muted"></div>
+    <fieldset class="group"><legend>How did you get it?</legend>
+      ${HOLD_MODES.map(([k, l, h]) => html`<label class="radio"><input type="radio" name="mode" value="${k}" ${k === startMode ? 'checked' : ''}> <span><strong>${l}</strong><small class="muted">${h}</small></span></label>`)}
+    </fieldset>
+    ${row(field('Date & time', input('occurred_at', { type: 'datetime-local', value: F.toLocalInput(defaults.occurred_at), required: true, label: 'Date' })),
+          field('Quantity', num('quantity', { required: true, label: 'Quantity', placeholder: 'e.g. 0.05' }), 'Fractions allowed'))}
+    ${row(field(html`<span class="price-label">Price per unit</span> (<span class="cur"></span>)`, num('unit_price', { required: true, label: 'Price per unit' })),
+          html`<div class="fee-field">${field(html`Fee (<span class="cur"></span>)`, num('fee', { placeholder: '0' }), 'Trading fee, if any')}</div>`)}
+    <div class="preview-box"><span class="pv-label">Total</span>: <span class="preview"></span></div>
+    ${fxRow()}
+    ${metaFields()}`;
+  modal({
+    title: 'Record holding', body, wide: true, submitLabel: 'Record holding',
+    onOpen: (el) => {
+      const form = $('form', el);
+      const mode = () => form.querySelector('input[name=mode]:checked')?.value || 'BUY_CASH';
+      wireMoney(el, { amountFn: (f) => { const q = numVal(f.quantity.value), p = numVal(f.unit_price.value), fee = mode() === 'OWNED' ? 0 : numVal(f.fee.value) || 0; return q * p + fee; } });
+      const avail = $('.avail', el);
+      const update = () => {
+        const acc = store.account(form.account_id.value), a = store.asset(form.asset_id.value), m = mode();
+        $('.price-label', el).textContent = m === 'OWNED' ? 'Average price you paid per unit' : 'Price per unit';
+        $('.fee-field', el).hidden = m === 'OWNED';
+        $('.pv-label', el).textContent = m === 'OWNED' ? 'Cost basis' : 'Total cost';
+        const parts = [];
+        if (acc) parts.push('Cash in ' + acc.name + ': ' + F.money(cashOf(acc.account_id), acc.currency));
+        if (acc && a) parts.push('Already holding: ' + F.qty(holdingQty(acc.account_id, a.asset_id)) + ' ' + (a.ticker || a.unit_label || 'units'));
+        if (acc && a && a.currency !== acc.currency) parts.push(`Enter the price in ${acc.currency} (the account's currency).`);
+        avail.textContent = parts.join(' · ');
+      };
+      form.addEventListener('change', update); update();
+      $('[data-new-asset]', el).addEventListener('click', () => {
+        const keep = formData(form);
+        assetForm(cls || 'CRYPTO', null, (asset) => holdingForm({ asset_id: asset.asset_id, asset_class: asset.asset_class, account_id: keep.account_id, mode: keep.mode }));
+      });
+    },
+    onSubmit: async (form) => {
+      const d = formData(form);
+      const m = form.querySelector('input[name=mode]:checked')?.value || 'BUY_CASH';
+      const q = numVal(d.quantity), p = numVal(d.unit_price), fee = m === 'OWNED' ? 0 : (numVal(d.fee) || 0);
+      if (!(q > 0)) throw new Error('Enter a quantity greater than zero.');
+      if (!(p > 0)) throw new Error('Enter the price per unit.');
+      const acc = store.account(d.account_id);
+      if (m === 'BUY_CASH' && acc && acc.type !== 'LIABILITY' && q * p + fee > cashOf(acc.account_id) + 1e-9) {
+        throw new Error(`Not enough cash recorded in ${acc.name} (${F.money(cashOf(acc.account_id), acc.currency)}). Choose "Bought with money from outside the app", or record a deposit first.`);
+      }
+      const base = { asset_id: d.asset_id, account_id: d.account_id, occurred_at: F.fromLocalInput(d.occurred_at), quantity: d.quantity, fx_rate: d.fx_rate, reference_no: d.reference_no, attachment: d.attachment, remarks: d.remarks };
+      const payload = m === 'OWNED'
+        ? { ...base, type: 'ADD_POSITION', gross_amount: Number((q * p).toPrecision(15)) }
+        : { ...base, type: 'BUY', unit_price: d.unit_price, fee: d.fee, fund_externally: m === 'BUY_OUTSIDE' };
+      const a = store.asset(d.asset_id);
+      await submit('postTransaction', payload, requestId, `Recorded ${F.qty(q)} ${a?.ticker || a?.name || ''}`);
+    }
+  });
+}
+
 export function assetTransferForm(defaults = {}) {
   const requestId = uid('req');
   const body = html`
@@ -358,7 +433,7 @@ export function accountForm(existing = null) {
 }
 
 const CLASS_NAMES = { CRYPTO: 'crypto asset', STOCK: 'stock', OTHER: 'asset' };
-export function assetForm(cls, existing = null) {
+export function assetForm(cls, existing = null, onCreated = null) {
   const requestId = uid('req');
   // Crypto is quoted in USD by default (Binance USDT pairs); stocks and other assets in the base currency.
   const a = existing || { asset_class: cls, currency: cls === 'CRYPTO' ? 'USD' : store.base, price_source: cls === 'CRYPTO' ? 'BINANCE' : 'MANUAL' };
@@ -406,7 +481,7 @@ export function assetForm(cls, existing = null) {
       if (existing) await submit('updateAsset', { asset_id: existing.asset_id, expected_updated_at: existing.updated_at, ...d }, requestId, 'Asset updated');
       else {
         const res = await submit('createAsset', { ...d, asset_class: cls }, requestId, 'Asset added');
-        setTimeout(() => assetTxForm(cls === 'OTHER' ? 'ADD_POSITION' : 'BUY', { asset_id: res.asset.asset_id, asset_class: cls }), 150);
+        setTimeout(() => (onCreated ? onCreated(res.asset) : holdingForm({ asset_id: res.asset.asset_id, asset_class: cls })), 150);
       }
     }
   });
@@ -501,7 +576,7 @@ export async function reverseTx(tx) {
 /** Quick actions used by the dashboard and nav. */
 export const quick = {
   deposit: (d) => cashTxForm('DEPOSIT', d), withdrawal: (d) => cashTxForm('WITHDRAWAL', d), transfer: (d) => transferForm(d),
-  addAsset: () => addAssetChooser(), buy: (d) => assetTxForm('BUY', d || {}), sell: (d) => assetTxForm('SELL', d || {}),
+  addAsset: () => addAssetChooser(), buy: (d) => holdingForm(d || {}), hold: (d) => holdingForm(d || {}), sell: (d) => assetTxForm('SELL', d || {}),
   balance: (d) => cashTxForm('RECONCILE', d), income: (d) => cashTxForm('INCOME', d), fee: (d) => cashTxForm('FEE', d),
   account: () => accountForm()
 };

@@ -89,7 +89,7 @@ export function render(root) {
     <p class="method-note muted">Performance = change in net worth minus external deposits & withdrawals. Return % is ${store.setting('performance_method', 'TWR') === 'TWR' ? 'time-weighted (chain-linked daily snapshots, flows at end of day)' : 'Modified Dietz (flows weighted by time in period)'}. ${firstSnap ? 'History from ' + F.dateStr(firstSnap.snapshot_date) + '.' : 'No daily snapshots yet — history will build from today.'}</p>
 
     <section class="card quick" aria-label="Quick actions"><h3>Quick actions</h3><div class="quick-grid">
-      ${[['deposit', 'Add deposit', 'down'], ['withdrawal', 'Add withdrawal', 'up'], ['transfer', 'Transfer funds', 'swap'], ['addAsset', 'Add asset', 'plus'], ['buy', 'Record purchase', 'cart'], ['sell', 'Record sale', 'tag'], ['balance', 'Update balance', 'scale'], ['export', 'Export report', 'file']].map(([k, l, i]) => html`<button class="qa" data-q="${k}">${F.icon(i)}<span>${l}</span></button>`)}
+      ${[['deposit', 'Add deposit', 'down'], ['withdrawal', 'Add withdrawal', 'up'], ['transfer', 'Transfer funds', 'swap'], ['addAsset', 'Add asset', 'plus'], ['buy', 'Record holding', 'cart'], ['sell', 'Record sale', 'tag'], ['balance', 'Update balance', 'scale'], ['export', 'Export report', 'file']].map(([k, l, i]) => html`<button class="qa" data-q="${k}">${F.icon(i)}<span>${l}</span></button>`)}
     </div></section>
 
     <section class="grid g2">

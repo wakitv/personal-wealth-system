@@ -356,3 +356,13 @@ body.privacy .amt:hover { filter: none; }
   .nw-pill { display: none; }            /* net worth is the first thing on the dashboard anyway */
   .topbar .icon-btn { width: 32px; height: 32px; }
 }
+
+/* record-holding form */
+.inline-pick { display: flex; gap: 6px; }
+.inline-pick select { flex: 1; min-width: 0; }
+.radio { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; }
+.radio:hover { background: var(--panel-2); }
+.radio:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.radio input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.radio span { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.radio small { font-size: 12px; }

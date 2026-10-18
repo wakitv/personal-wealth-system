@@ -2,7 +2,7 @@ import { html, mount, $ } from '../utils/dom.js';
 import * as F from '../utils/format.js';
 import { store } from '../state.js';
 import { dataTable, emptyState, statCard, chart, chartBox, cssVar, toast, errorMessage, confirmDialog, PALETTE } from '../components/ui.js';
-import { assetForm, assetTxForm, priceForm, valuationForm, assetTransferForm, cashTxForm, removeAssetForm } from '../components/forms.js';
+import { assetForm, assetTxForm, priceForm, valuationForm, assetTransferForm, cashTxForm, removeAssetForm, holdingForm } from '../components/forms.js';
 import { txColumns } from './transactions.js';
 import { qualityBanner } from './dashboard.js';
 import { refreshMarketPrices, marketAssets } from '../services/market.js';
@@ -46,7 +46,7 @@ function holdingColumns(cls, total) {
     { key: 'realizedBase', label: 'Realized', align: 'r', sort: (r) => r.realizedBase, render: (r) => (r.realizedBase ? F.pl(r.realizedBase) : html`<span class="muted">—</span>`) },
     { key: 'incomeBase', label: cls === 'STOCK' ? 'Dividends' : 'Income', align: 'r', sort: (r) => r.incomeBase, render: (r) => (r.incomeBase ? F.php(r.incomeBase) : html`<span class="muted">—</span>`) },
     { key: 'alloc', label: 'Alloc.', align: 'r', sort: (r) => r.valueBase, render: (r) => (total > 0 ? F.pct(r.valueBase / total * 100, { sign: false, dp: 1 }) : '—') },
-    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}">${cls === 'OTHER' ? 'Add' : 'Buy'}</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}<button class="icon-btn" data-edit-asset="${r.asset_id}" aria-label="Edit ${r.ticker || r.name}" title="Edit asset">${F.icon('edit')}</button><button class="icon-btn" data-remove="${r.asset_id}" aria-label="Remove ${r.ticker || r.name}" title="Remove asset">${F.icon('trash')}</button></div>` }
+    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}" title="Record a purchase or holding">${F.icon('plus')} Record</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}<button class="icon-btn" data-edit-asset="${r.asset_id}" aria-label="Edit ${r.ticker || r.name}" title="Edit asset">${F.icon('edit')}</button><button class="icon-btn" data-remove="${r.asset_id}" aria-label="Remove ${r.ticker || r.name}" title="Remove asset">${F.icon('trash')}</button></div>` }
   ];
   return cols;
 }
@@ -66,7 +66,8 @@ export function render(root, params, route) {
       <div class="head-actions wrap">${canRefresh ? html`<button class="btn" id="refresh">${F.icon('refresh')} Refresh prices</button>` : ''}
         ${cls !== 'OTHER' ? html`<button class="btn" data-x="move">${F.icon('swap')} Move between accounts</button>` : ''}
         ${cls === 'STOCK' ? html`<button class="btn" data-x="div">Record dividend</button>` : ''}${cls === 'CRYPTO' ? html`<button class="btn" data-x="stake">Record reward</button>` : ''}
-        <button class="btn primary" data-x="add">${F.icon('plus')} Add ${meta.noun}</button></div></div>
+        <button class="btn" data-x="add">${F.icon('plus')} Add ${meta.noun}</button>
+        <button class="btn primary" data-x="hold">${F.icon('cart')} Record holding</button></div></div>
     ${qualityBanner(st)}
     <section class="grid g5">
       ${statCard({ label: 'Market value', value: F.php(total), sub: s.totalAssets ? F.pct(total / s.totalAssets * 100, { sign: false, dp: 1 }) + ' of total assets' : '' })}
@@ -76,16 +77,17 @@ export function render(root, params, route) {
       ${statCard({ label: cls === 'STOCK' ? 'Dividends · Fees' : 'Income · Fees', value: html`<span class="amt ${inc ? 'up' : ''}">${F.php(inc, { compact: true })}</span> · <span class="amt ${fees ? 'down' : ''}">${F.php(fees, { compact: true })}</span>` })}
     </section>
     <div class="card" id="holdings"></div>`);
-  if (!rows.length) mount($('#holdings'), emptyState('No ' + meta.title.toLowerCase() + ' yet', cls === 'OTHER' ? 'Add a business stake, property, gold or any other holding, then record your position and a valuation.' : 'Add the asset, then record a purchase (or an existing position you already own).', html`<button class="btn primary" data-x="add">Add ${meta.noun}</button>`));
+  if (!rows.length) mount($('#holdings'), emptyState('No ' + meta.title.toLowerCase() + ' yet', cls === 'OTHER' ? 'Add a business stake, property, gold or any other holding, then record your position and a valuation.' : 'Add the asset, then record your holding: a purchase, or coins/shares you already own.', html`<button class="btn primary" data-x="add">Add ${meta.noun}</button>`));
   else dataTable($('#holdings'), { rows, columns: holdingColumns(cls, total), initialSort: { key: 'valueBase', dir: 'desc' }, pageSize: 50 });
   root.onclick = async (e) => {
     const x = e.target.closest('[data-x]')?.dataset.x;
     if (x === 'add') return assetForm(cls);
+    if (x === 'hold') return rows.length ? holdingForm({ asset_class: cls }) : assetForm(cls);
     if (x === 'move') return assetTransferForm({ asset_class: cls });
     if (x === 'div') return cashTxForm('INCOME', { category: 'DIVIDEND' });
     if (x === 'stake') return cashTxForm('INCOME', { category: 'STAKING' });
     const b = e.target.closest('[data-buy]'), sl = e.target.closest('[data-sell]'), pr = e.target.closest('[data-price]');
-    if (b) return assetTxForm(cls === 'OTHER' ? 'ADD_POSITION' : 'BUY', { asset_id: b.dataset.buy, asset_class: cls });
+    if (b) return holdingForm({ asset_id: b.dataset.buy, asset_class: cls, mode: cls === 'OTHER' ? 'OWNED' : undefined });
     if (sl) return assetTxForm(cls === 'OTHER' ? 'REDUCE_POSITION' : 'SELL', { asset_id: sl.dataset.sell, asset_class: cls, account_id: store.live.positions.find((p) => p.asset_id === sl.dataset.sell)?.account_id });
     if (pr) { const a = store.asset(pr.dataset.price); return cls === 'OTHER' ? valuationForm(a) : priceForm(a); }
     const ea = e.target.closest('[data-edit-asset]');
@@ -113,7 +115,7 @@ function renderOverview(root) {
   const conc = Core.concentration(st.byAsset, s.totalAssets, threshold);
   mount(root, html`
     <div class="page-head"><div><h1>My portfolio</h1><p class="muted">All investment positions across every account, shown in ${F.displayCurrency()}.</p></div>
-      <div class="head-actions"><button class="btn primary" data-x="add">${F.icon('plus')} Add asset</button></div></div>
+      <div class="head-actions"><button class="btn" data-x="add">${F.icon('plus')} Add asset</button><button class="btn primary" data-x="hold">${F.icon('cart')} Record holding</button></div></div>
     ${qualityBanner(st)}
     ${conc.length ? html`<div class="banner danger" role="status">${F.icon('alert')}<div><strong>Concentration risk</strong> · ${conc.map((c) => c.name + ' is ' + F.pct(c.pct, { sign: false, dp: 1 })).join(', ')} of total assets (threshold ${threshold}%). <a href="#/planning">See allocation planner</a></div></div>` : ''}
     <section class="grid g4">
@@ -138,6 +140,7 @@ function renderOverview(root) {
   else mount($('#all'), emptyState('No positions yet', 'Add crypto, stocks or other assets to see them here.'));
   root.onclick = (e) => {
     if (e.target.closest('[data-x="add"]')) import('../components/forms.js').then((m) => m.addAssetChooser());
+    if (e.target.closest('[data-x="hold"]')) { if (store.activeAssets().length) holdingForm({}); else import('../components/forms.js').then((m) => m.addAssetChooser()); }
   };
 }
 
@@ -153,7 +156,7 @@ function renderAsset(root, id) {
   mount(root, html`
     <div class="page-head"><div><a class="back sm" href="#/${meta.route}">← ${meta.title}</a><h1>${a.ticker ? a.ticker + ' · ' : ''}${a.name}</h1>
       <p class="muted">${[cls === 'OTHER' ? (a.category || '').toLowerCase() : meta.title.replace(/s$/, ''), a.network, a.exchange, 'priced in ' + a.currency, a.price_source === 'COINGECKO' ? 'CoinGecko: ' + a.price_source_id : a.price_source === 'BINANCE' ? 'Binance: ' + a.price_source_id : 'manual prices'].filter(Boolean).join(' · ')}${archived ? ' · archived' : ''}</p></div>
-      <div class="head-actions wrap">${archived ? '' : html`<button class="btn sm" data-x="buy">${cls === 'OTHER' ? 'Add to position' : 'Buy'}</button>${r.qty ? html`<button class="btn sm" data-x="sell">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button><button class="btn sm" data-x="move">Move</button>` : ''}<button class="btn sm" data-x="income">Income</button><button class="btn sm" data-x="price">${cls === 'OTHER' ? 'Update valuation' : 'Update price'}</button><button class="btn sm" data-x="addpos">Add existing</button>`}
+      <div class="head-actions wrap">${archived ? '' : html`<button class="btn sm primary" data-x="buy">${F.icon('cart')} Record holding</button>${r.qty ? html`<button class="btn sm" data-x="sell">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button><button class="btn sm" data-x="move">Move</button>` : ''}<button class="btn sm" data-x="income">Income</button><button class="btn sm" data-x="price">${cls === 'OTHER' ? 'Update valuation' : 'Update price'}</button>`}
         <button class="btn sm" data-x="edit">${F.icon('edit')} Edit asset</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button><button class="btn sm danger" data-x="remove">${F.icon('trash')} Remove</button></div></div>
     <section class="grid g5">
       ${statCard({ label: 'Quantity', value: F.qty(r.qty) + ' ' + (a.unit_label || ''), sub: r.locations.map((l) => store.account(l.account_id)?.name + ': ' + F.qty(l.qty)).join(' · ') })}
@@ -176,7 +179,7 @@ function renderAsset(root, id) {
   root.onclick = async (e) => {
     const x = e.target.closest('[data-x]')?.dataset.x;
     const firstAcc = r.locations[0]?.account_id;
-    if (x === 'buy') assetTxForm(cls === 'OTHER' ? 'ADD_POSITION' : 'BUY', { asset_id: id, account_id: firstAcc });
+    if (x === 'buy') holdingForm({ asset_id: id, asset_class: cls, account_id: firstAcc, mode: cls === 'OTHER' ? 'OWNED' : undefined });
     if (x === 'sell') assetTxForm(cls === 'OTHER' ? 'REDUCE_POSITION' : 'SELL', { asset_id: id, account_id: firstAcc });
     if (x === 'addpos') assetTxForm('ADD_POSITION', { asset_id: id, account_id: firstAcc });
     if (x === 'move') assetTransferForm({ asset_id: id, from_account_id: firstAcc });

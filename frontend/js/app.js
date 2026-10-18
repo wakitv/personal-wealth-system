@@ -75,7 +75,7 @@ function shell() {
             <button class="icon-btn" id="reload" aria-label="Reload data" title="Reload">${F.icon('refresh')}</button>
             <div class="add-wrap"><button class="btn primary sm" id="add-btn" aria-haspopup="menu" aria-expanded="false">${F.icon('plus')}<span class="hide-sm">New</span></button>
               <div class="menu" id="add-menu" role="menu" hidden>
-                ${[['deposit', 'Deposit'], ['withdrawal', 'Withdrawal'], ['transfer', 'Transfer'], ['buy', 'Purchase'], ['sell', 'Sale'], ['income', 'Income'], ['fee', 'Fee'], ['balance', 'Update balance'], ['addAsset', 'Asset'], ['account', 'Account']].map(([k, l]) => html`<button role="menuitem" data-q="${k}">${l}</button>`)}
+                ${[['deposit', 'Deposit'], ['withdrawal', 'Withdrawal'], ['transfer', 'Transfer'], ['buy', 'Holding / purchase'], ['sell', 'Sale'], ['income', 'Income'], ['fee', 'Fee'], ['balance', 'Update balance'], ['addAsset', 'Asset'], ['account', 'Account']].map(([k, l]) => html`<button role="menuitem" data-q="${k}">${l}</button>`)}
               </div></div>
           </div>
         </header>

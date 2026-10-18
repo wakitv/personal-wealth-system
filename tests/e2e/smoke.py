@@ -126,7 +126,8 @@ with sync_playwright() as p:
     assert page.locator('.modal [name="price_source_id"]').input_value() == 'BTCUSDT'
     fill_modal(page, {'currency': 'PHP', 'price_source': 'MANUAL'})
     submit_modal(page, expect_close=False)  # the purchase form opens next
-    page.wait_for_selector('.modal >> text=Record purchase')
+    page.wait_for_selector('.modal >> text=Record holding')
+    page.check('.modal input[name=mode][value=BUY_CASH]')
     fill_modal(page, {'account_id': 'label:BPI', 'quantity': '0.02', 'unit_price': '3000000', 'fee': '0'})
     submit_modal(page)
     page.locator('[data-price]').first.click()
@@ -159,7 +160,7 @@ with sync_playwright() as p:
     page.locator('.modal [name="price_source"]').dispatch_event('change')
     fill_modal(page, {'price_source_id': 'ETHUSDT'})
     submit_modal(page, expect_close=False)
-    page.wait_for_selector('.modal >> text=Record purchase')
+    page.wait_for_selector('.modal >> text=Record holding')
     page.locator('.modal [data-close]').first.click()
     expect(page.locator('.modal-wrap')).to_have_count(0)
     page.locator('#refresh').click()
@@ -185,7 +186,8 @@ with sync_playwright() as p:
     page.locator('[data-x="add"]').first.click()
     fill_modal(page, {'name': 'Example Corp', 'ticker': 'EXMP', 'exchange': 'PSE', 'currency': 'PHP'})
     submit_modal(page, expect_close=False)
-    page.wait_for_selector('.modal >> text=Record purchase')
+    page.wait_for_selector('.modal >> text=Record holding')
+    page.check('.modal input[name=mode][value=BUY_CASH]')
     fill_modal(page, {'account_id': 'label:BPI', 'quantity': '10', 'unit_price': '100'})
     submit_modal(page)
     page.locator('[data-sell]').first.click()
@@ -222,6 +224,29 @@ with sync_playwright() as p:
     page.goto(BASE + '#/dashboard')
     expect(page.locator('.hero-value')).to_have_text(php_nw)
 
+    # Record holding from the page header: all three ways, on an existing asset
+    page.goto(BASE + '#/stocks')
+    page.locator('[data-x="hold"]').click()
+    expect(page.locator('.modal')).to_contain_text('How did you get it?')
+    fill_modal(page, {'asset_id': 'label:EXMP', 'account_id': 'label:GCash', 'quantity': '5', 'unit_price': '100'})
+    page.check('.modal input[name=mode][value=BUY_CASH]')
+    fill_modal(page, {'quantity': '500'})           # 500 × 100 = 50,000 > GCash cash (10,000)
+    submit_modal(page, expect_close=False)
+    expect(page.locator('.modal .form-error')).to_contain_text('Not enough cash recorded in GCash')
+    page.check('.modal input[name=mode][value=BUY_OUTSIDE]')   # paid from outside → linked deposit + buy
+    fill_modal(page, {'quantity': '5'})
+    submit_modal(page)
+    page.locator('tr', has_text='EXMP').locator('[data-buy]').click()   # row "Record" button
+    page.check('.modal input[name=mode][value=OWNED]')                # already owned
+    expect(page.locator('.modal .price-label')).to_have_text('Average price you paid per unit')
+    fill_modal(page, {'account_id': 'label:GCash', 'quantity': '3', 'unit_price': '90'})
+    submit_modal(page)
+    srow = page.locator('.table tbody tr', has_text='EXMP')
+    expect(srow).to_contain_text('14')                 # 6 + 5 + 3 shares
+    expect(srow).to_contain_text('₱1,370.00')          # cost 600 + 500 + 270
+    page.goto(BASE + '#/accounts')
+    expect(page.locator('a.acct', has_text='GCash')).to_contain_text('₱10,000.00')   # outside purchase leaves cash unchanged
+
     # Snapshot + integrity
     page.goto(BASE + '#/settings')
     page.locator('[data-a="snap"]').click()
@@ -248,7 +273,7 @@ with sync_playwright() as p:
     # Remove asset: stock with history → confirm → reversed and gone, ledger still reconciles
     page.goto(BASE + '#/stocks')
     page.locator('tr', has_text='EXMP').locator('[data-remove]').click()
-    expect(page.locator('.modal')).to_contain_text('2 transactions')
+    expect(page.locator('.modal')).to_contain_text('4 transactions')
     fill_modal(page, {'reason': 'smoke test removal'})
     submit_modal(page, expect_close=False)
     expect(page.locator('.modal .form-error')).to_contain_text('confirmation')
