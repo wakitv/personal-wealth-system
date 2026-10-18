@@ -46,7 +46,7 @@ function holdingColumns(cls, total) {
     { key: 'realizedBase', label: 'Realized', align: 'r', sort: (r) => r.realizedBase, render: (r) => (r.realizedBase ? F.pl(r.realizedBase) : html`<span class="muted">—</span>`) },
     { key: 'incomeBase', label: cls === 'STOCK' ? 'Dividends' : 'Income', align: 'r', sort: (r) => r.incomeBase, render: (r) => (r.incomeBase ? F.php(r.incomeBase) : html`<span class="muted">—</span>`) },
     { key: 'alloc', label: 'Alloc.', align: 'r', sort: (r) => r.valueBase, render: (r) => (total > 0 ? F.pct(r.valueBase / total * 100, { sign: false, dp: 1 }) : '—') },
-    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}">${cls === 'OTHER' ? 'Add' : 'Buy'}</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}<button class="icon-btn" data-remove="${r.asset_id}" aria-label="Remove ${r.ticker || r.name}" title="Remove asset">${F.icon('trash')}</button></div>` }
+    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}">${cls === 'OTHER' ? 'Add' : 'Buy'}</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}<button class="icon-btn" data-edit-asset="${r.asset_id}" aria-label="Edit ${r.ticker || r.name}" title="Edit asset">${F.icon('edit')}</button><button class="icon-btn" data-remove="${r.asset_id}" aria-label="Remove ${r.ticker || r.name}" title="Remove asset">${F.icon('trash')}</button></div>` }
   ];
   return cols;
 }
@@ -88,6 +88,8 @@ export function render(root, params, route) {
     if (b) return assetTxForm(cls === 'OTHER' ? 'ADD_POSITION' : 'BUY', { asset_id: b.dataset.buy, asset_class: cls });
     if (sl) return assetTxForm(cls === 'OTHER' ? 'REDUCE_POSITION' : 'SELL', { asset_id: sl.dataset.sell, asset_class: cls, account_id: store.live.positions.find((p) => p.asset_id === sl.dataset.sell)?.account_id });
     if (pr) { const a = store.asset(pr.dataset.price); return cls === 'OTHER' ? valuationForm(a) : priceForm(a); }
+    const ea = e.target.closest('[data-edit-asset]');
+    if (ea) { const a = store.asset(ea.dataset.editAsset); return assetForm(a.asset_class, a); }
     const rm = e.target.closest('[data-remove]');
     if (rm) return removeAssetForm(store.asset(rm.dataset.remove));
     if (e.target.closest('#refresh')) refreshPrices(e.target.closest('#refresh'));
@@ -110,7 +112,7 @@ function renderOverview(root) {
   const threshold = Number(store.setting('concentration_threshold', 25));
   const conc = Core.concentration(st.byAsset, s.totalAssets, threshold);
   mount(root, html`
-    <div class="page-head"><div><h1>My portfolio</h1><p class="muted">All investment positions across every account, valued in ${store.base}.</p></div>
+    <div class="page-head"><div><h1>My portfolio</h1><p class="muted">All investment positions across every account, shown in ${F.displayCurrency()}.</p></div>
       <div class="head-actions"><button class="btn primary" data-x="add">${F.icon('plus')} Add asset</button></div></div>
     ${qualityBanner(st)}
     ${conc.length ? html`<div class="banner danger" role="status">${F.icon('alert')}<div><strong>Concentration risk</strong> · ${conc.map((c) => c.name + ' is ' + F.pct(c.pct, { sign: false, dp: 1 })).join(', ')} of total assets (threshold ${threshold}%). <a href="#/planning">See allocation planner</a></div></div>` : ''}
@@ -152,7 +154,7 @@ function renderAsset(root, id) {
     <div class="page-head"><div><a class="back sm" href="#/${meta.route}">← ${meta.title}</a><h1>${a.ticker ? a.ticker + ' · ' : ''}${a.name}</h1>
       <p class="muted">${[cls === 'OTHER' ? (a.category || '').toLowerCase() : meta.title.replace(/s$/, ''), a.network, a.exchange, 'priced in ' + a.currency, a.price_source === 'COINGECKO' ? 'CoinGecko: ' + a.price_source_id : a.price_source === 'BINANCE' ? 'Binance: ' + a.price_source_id : 'manual prices'].filter(Boolean).join(' · ')}${archived ? ' · archived' : ''}</p></div>
       <div class="head-actions wrap">${archived ? '' : html`<button class="btn sm" data-x="buy">${cls === 'OTHER' ? 'Add to position' : 'Buy'}</button>${r.qty ? html`<button class="btn sm" data-x="sell">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button><button class="btn sm" data-x="move">Move</button>` : ''}<button class="btn sm" data-x="income">Income</button><button class="btn sm" data-x="price">${cls === 'OTHER' ? 'Update valuation' : 'Update price'}</button><button class="btn sm" data-x="addpos">Add existing</button>`}
-        <button class="btn sm ghost" data-x="edit">Edit</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button><button class="btn sm danger" data-x="remove">${F.icon('trash')} Remove</button></div></div>
+        <button class="btn sm" data-x="edit">${F.icon('edit')} Edit asset</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button><button class="btn sm danger" data-x="remove">${F.icon('trash')} Remove</button></div></div>
     <section class="grid g5">
       ${statCard({ label: 'Quantity', value: F.qty(r.qty) + ' ' + (a.unit_label || ''), sub: r.locations.map((l) => store.account(l.account_id)?.name + ': ' + F.qty(l.qty)).join(' · ') })}
       ${statCard({ label: 'Market value', value: F.php(r.valueBase), sub: priceCell(r) })}

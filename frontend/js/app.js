@@ -64,6 +64,10 @@ function shell() {
       <div class="main-col">
         <header class="topbar">
           <button class="icon-btn menu-btn" id="menu" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">${F.icon('menu')}</button>
+          <div class="cur-switch seg" role="group" aria-label="Display currency" id="cur-switch">
+            <button type="button" data-cur="PHP" title="Show totals in Philippine pesos">₱ PHP</button>
+            <button type="button" data-cur="USD" title="Show totals in US dollars">$ USD</button>
+          </div>
           <div class="topbar-title" id="top-title"></div>
           <div class="topbar-actions">
             <div class="nw-pill" id="nw-pill" title="Net worth"></div>
@@ -82,6 +86,7 @@ function shell() {
   $('#scrim').onclick = () => toggleNav(false);
   $('#privacy').onclick = () => { const on = document.body.classList.toggle('privacy'); try { localStorage.setItem('pwos.privacy', on ? '1' : '0'); } catch { /* ignore */ } };
   $('#reload').onclick = () => reload(true);
+  $('#cur-switch').onclick = (e) => { const b = e.target.closest('[data-cur]'); if (b) switchDisplay(b.dataset.cur, b); };
   const menu = $('#add-menu'), btn = $('#add-btn');
   btn.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute('aria-expanded', String(!menu.hidden)); if (!menu.hidden) $('button', menu).focus(); };
   menu.onclick = (e) => { const q = e.target.closest('[data-q]')?.dataset.q; if (q) { menu.hidden = true; quick[q](); } };
@@ -162,8 +167,32 @@ function renderRoute(scrollTop) {
   lastRoute = key;
 }
 function assetNav(id) { const a = store.asset(id); return a ? { CRYPTO: 'crypto', STOCK: 'stocks', OTHER: 'other' }[a.asset_class] : 'portfolio'; }
+/**
+ * Header PHP / USD switch. Changes how totals are shown on this device; records stay in PHP.
+ * USD needs a USD→PHP rate: the latest recorded one, fetched automatically if there is none.
+ */
+async function switchDisplay(cur, btn) {
+  if (!store.data) return;
+  store.displayPref = cur;
+  if (cur === 'USD' && !store.usdRate()) {
+    btn?.classList.add('loading');
+    try { const { refreshMarketPrices } = await import('./services/market.js'); await refreshMarketPrices({ fxOnly: true }); }
+    catch (e) {
+      store.displayPref = store.base;
+      toast('No USD rate yet. ' + errorMessage(e) + ' You can also record one in Settings → FX rates (currency USD).', 'error', 9000);
+    } finally { btn?.classList.remove('loading'); }
+  }
+  store.applyDisplay();
+  renderRoute();
+  updateChrome();
+}
+
 function updateChrome() {
   if (!store.data) return;
+  const disp = F.displayCurrency();
+  $$('#cur-switch [data-cur]').forEach((b) => { const on = b.dataset.cur === disp; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  const sw = $('#cur-switch');
+  if (sw) sw.title = disp !== store.base && store.usdRate() ? `1 USD = ${F.qty(store.usdRate())} ${store.base} (latest recorded rate)` : 'Display currency';
   const pill = $('#nw-pill');
   if (pill) pill.innerHTML = String(html`<span class="muted xs">Net worth</span> <strong class="amt">${F.php(store.live.summary.netWorth, { compact: true })}</strong>`);
   const foot = $('#side-foot');

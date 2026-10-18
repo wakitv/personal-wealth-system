@@ -22,7 +22,10 @@ function range() {
   return { from: Core.endOfLocalDayMs(Core.addDays(first, -1), tz), to: Math.min(Date.now(), Core.endOfLocalDayMs(last, tz)), label: monthLabel(m).replace(/ (\d\d)$/, ' 20$1'), fromStr: first, toStr: last };
 }
 const inRange = (t, r) => t > r.from && t <= r.to;
-const P = (v) => F.php(v);
+// Reports stay in the base currency regardless of the header switch, so on-screen figures,
+// column labels and CSV/Excel exports always agree with the ledger.
+const P = (v, o) => F.money(v, store.base, o);
+const PL = (v) => html`<span class="amt ${F.tone(v)}">${F.money(v, store.base, { sign: true })}</span>`;
 
 /** Every report as {title, columns, rows}; used for screen, CSV and XLSX. */
 function build(type, r, rep) {
@@ -77,8 +80,8 @@ function build(type, r, rep) {
 
 function renderCell(kind, v) {
   if (v === '' || v === null || v === undefined) return html`<span class="muted">—</span>`;
-  if (kind === 'm') return F.php(v);
-  if (kind === 'pl') return F.pl(v);
+  if (kind === 'm') return P(v);
+  if (kind === 'pl') return PL(v);
   if (kind === 'pct') return F.pct(v);
   if (kind === 'q') return F.qty(v);
   if (kind === 'n') return typeof v === 'number' ? F.qty(v) : v;
@@ -88,7 +91,7 @@ function renderCell(kind, v) {
 function summaryBlock(r, rep) {
   const c = rep.close.summary, fl = rep.flows;
   const perf = store.performance('CUSTOM', { from: r.fromStr, to: r.toStr });
-  const items = [['Opening net worth', P(rep.openNW)], ['Closing net worth', P(rep.closeNW)], ['Deposits + opening balances', P(fl.deposits + fl.opening)], ['External withdrawals', P(fl.withdrawals)], ['Other external flows', P(fl.positions + fl.reconcile)], ['Internal transfers (excluded)', P(fl.transfers)], ['Realized P&L (period)', F.pl(fl.realized)], ['Unrealized P&L (at close)', F.pl(c.unrealized)], ['Change in unrealized', F.pl(rep.unrealizedChange)], ['Investment income', P(fl.income)], ['Fees', P(fl.fees)], ['Investment result', F.pl(rep.gain)], ['Return', perf.available && perf.returnPct !== null ? F.pct(perf.returnPct) : '—']];
+  const items = [['Opening net worth', P(rep.openNW)], ['Closing net worth', P(rep.closeNW)], ['Deposits + opening balances', P(fl.deposits + fl.opening)], ['External withdrawals', P(fl.withdrawals)], ['Other external flows', P(fl.positions + fl.reconcile)], ['Internal transfers (excluded)', P(fl.transfers)], ['Realized P&L (period)', PL(fl.realized)], ['Unrealized P&L (at close)', PL(c.unrealized)], ['Change in unrealized', PL(rep.unrealizedChange)], ['Investment income', P(fl.income)], ['Fees', P(fl.fees)], ['Investment result', PL(rep.gain)], ['Return', perf.available && perf.returnPct !== null ? F.pct(perf.returnPct) : '—']];
   return html`<div class="report-summary">${items.map(([k, v]) => html`<div><span class="muted">${k}</span><strong class="amt">${v}</strong></div>`)}</div>
     <p class="method-note muted"><strong>Method & limitations.</strong> Investment result = closing net worth − opening net worth − net external flows; deposits and withdrawals are never counted as profit, and internal transfers are excluded. Return % uses ${store.setting('performance_method', 'TWR') === 'TWR' ? 'time-weighted chain-linking of daily snapshots (flows assumed at end of day)' : 'Modified Dietz'}${perf.available ? `, using ${perf.snapshotPoints} snapshot point(s)` : ''}. Cost basis is weighted-average with fees capitalised. Values use recorded prices and FX rates as of each date; holdings without a price are valued at cost; manual valuations are estimates. ${perf.note || ''}</p>`;
 }
@@ -108,10 +111,10 @@ export function render(root) {
         : html`<input type="date" id="r-from" value="${ui.from || r.fromStr}" aria-label="From"><input type="date" id="r-to" value="${ui.to || r.toStr}" aria-label="To"><button class="btn sm" id="r-apply">Apply</button>`}
     </div>
     <article class="card report" id="report">
-      <header class="report-head"><div><div class="muted sm">Personal Wealth OS · ${TYPES.find((t) => t[0] === ui.type)[1]}</div><h2>${r.label}</h2><div class="muted sm">${F.dateStr(r.fromStr)} – ${F.dateStr(r.toStr)} · ${store.base} · generated ${F.dateTime(Date.now())} (${store.tz})</div></div></header>
+      <header class="report-head"><div><div class="muted sm">Personal Wealth OS · ${TYPES.find((t) => t[0] === ui.type)[1]}</div><h2>${r.label}</h2><div class="muted sm">${F.dateStr(r.fromStr)} – ${F.dateStr(r.toStr)} · all amounts in ${store.base} · generated ${F.dateTime(Date.now())} (${store.tz})</div></div></header>
       ${summaryBlock(r, rep)}
       <h3>${def.title}</h3><div id="r-table"></div>
-      ${ui.type === 'summary' && def.extra?.length ? html`<h3>Monthly breakdown</h3><table class="table"><thead><tr><th>Month</th><th class="r">Start</th><th class="r">End</th><th class="r">Net flows</th><th class="r">Result</th><th class="r">Return</th></tr></thead><tbody>${def.extra.map((m) => html`<tr><td>${monthLabel(m.month)}${m.partial ? '*' : ''}</td><td class="r">${P(m.startValue)}</td><td class="r">${P(m.endValue)}</td><td class="r">${P(m.netFlows)}</td><td class="r">${F.pl(m.gain)}</td><td class="r">${F.pct(m.returnPct)}</td></tr>`)}</tbody></table>` : ''}
+      ${ui.type === 'summary' && def.extra?.length ? html`<h3>Monthly breakdown</h3><table class="table"><thead><tr><th>Month</th><th class="r">Start</th><th class="r">End</th><th class="r">Net flows</th><th class="r">Result</th><th class="r">Return</th></tr></thead><tbody>${def.extra.map((m) => html`<tr><td>${monthLabel(m.month)}${m.partial ? '*' : ''}</td><td class="r">${P(m.startValue)}</td><td class="r">${P(m.endValue)}</td><td class="r">${P(m.netFlows)}</td><td class="r">${PL(m.gain)}</td><td class="r">${F.pct(m.returnPct)}</td></tr>`)}</tbody></table>` : ''}
     </article>`);
   dataTable($('#r-table'), { rows: def.rows, search: def.rows.length > 15, pageSize: 500, empty: 'No records in this period.', columns: def.columns.map(([k, l, kind]) => ({ key: k, label: l, align: kind ? 'r' : '', render: (row) => renderCell(kind, row[k]) })) });
   root.onchange = (e) => {

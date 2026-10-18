@@ -120,7 +120,11 @@ with sync_playwright() as p:
     # Test D: buy BTC then mark to 3.3M
     page.goto(BASE + '#/crypto')
     page.locator('[data-x="add"]').first.click()
-    fill_modal(page, {'name': 'Bitcoin', 'ticker': 'BTC', 'currency': 'PHP'})
+    fill_modal(page, {'name': 'Bitcoin', 'ticker': 'BTC'})
+    # new crypto defaults: price currency USD, Binance source, symbol filled from the ticker
+    assert page.locator('.modal [name="currency"]').input_value() == 'USD'
+    assert page.locator('.modal [name="price_source_id"]').input_value() == 'BTCUSDT'
+    fill_modal(page, {'currency': 'PHP', 'price_source': 'MANUAL'})
     submit_modal(page, expect_close=False)  # the purchase form opens next
     page.wait_for_selector('.modal >> text=Record purchase')
     fill_modal(page, {'account_id': 'label:BPI', 'quantity': '0.02', 'unit_price': '3000000', 'fee': '0'})
@@ -190,6 +194,33 @@ with sync_playwright() as p:
     srow = page.locator('.table tbody tr', has_text='EXMP')
     expect(srow).to_contain_text('₱600.00')   # remaining cost basis
     expect(srow).to_contain_text('+₱80.00')   # realized
+
+    # Edit an asset from its table row: rename + change price currency PHP → USD after prices exist
+    page.goto(BASE + '#/crypto')
+    page.locator('tr', has_text='BTC').locator('[data-edit-asset]').click()
+    fill_modal(page, {'name': 'Bitcoin Core', 'currency': 'USD'})
+    submit_modal(page)
+    expect(page.locator('.table tbody tr', has_text='BTC')).to_contain_text('Bitcoin Core')
+    page.locator('#refresh').click()
+    page.wait_for_selector('.toast >> text=Updated 2 prices')
+    btc_row = page.locator('.table tbody tr', has_text='BTC')
+    expect(btc_row).to_contain_text('$60,000.00')    # now quoted in USD
+    expect(btc_row).to_contain_text('₱69,600.00')    # 0.02 × 60,000 × 58 — value unchanged
+
+    # Header PHP / USD display switch (USD rate 58 recorded by the price refresh above)
+    page.goto(BASE + '#/dashboard')
+    php_nw = text_of(page, '.hero-value')
+    page.locator('#cur-switch [data-cur="USD"]').click()
+    expect(page.locator('.hero-value')).to_contain_text('$')
+    usd_nw = text_of(page, '.hero-value')
+    to_num = lambda t: float(re.sub(r'[^0-9.]', '', t))
+    assert abs(to_num(php_nw) / 58 - to_num(usd_nw)) < 0.02, (php_nw, usd_nw)
+    expect(page.locator('#nw-pill')).to_contain_text('$')
+    page.goto(BASE + '#/reports')
+    expect(page.locator('#report .report-summary')).to_contain_text('₱')   # reports stay in PHP
+    page.locator('#cur-switch [data-cur="PHP"]').click()
+    page.goto(BASE + '#/dashboard')
+    expect(page.locator('.hero-value')).to_have_text(php_nw)
 
     # Snapshot + integrity
     page.goto(BASE + '#/settings')

@@ -34,7 +34,7 @@ export function render(root, params) {
         return html`<a class="card acct ${a.status === 'ARCHIVED' ? 'archived' : ''}" href="#/accounts/${a.account_id}">
           <div class="acct-top"><div><strong>${a.name}</strong><div class="muted sm">${a.institution || F.accountTypeLabel(a.type)}${a.reference ? ' · ' + ref(a) : ''}</div></div>${F.badge(a.currency)}</div>
           <div class="acct-bal amt">${F.money(v.cashNative, a.currency)}</div>
-          <div class="muted sm">${a.currency !== store.base ? (v.fxMissing ? 'No FX rate recorded — not included in totals' : '≈ ' + F.php(v.cashBase) + ' @ ' + F.qty(v.fxRate)) : 'Cash balance'}</div>
+          <div class="muted sm">${a.currency !== store.base ? (v.fxMissing ? 'No FX rate recorded — not included in totals' : '≈ ' + F.php(v.cashBase) + ' · rate ' + F.qty(v.fxRate) + ' ' + store.base) : 'Cash balance'}</div>
           ${v.holdingsBase ? html`<div class="acct-hold sm">+ holdings ${F.php(v.holdingsBase)} → <strong class="amt">${F.php(v.totalBase)}</strong></div>` : ''}
           <div class="muted xs">${last ? 'Last activity ' + F.date(last.occurred_at) : 'No activity'}${a.status === 'ARCHIVED' ? ' · archived' : ''}</div></a>`;
       })}</div></section>`)}`);

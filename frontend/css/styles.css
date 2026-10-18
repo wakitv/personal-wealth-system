@@ -344,3 +344,15 @@ body.privacy .amt:hover { filter: none; }
 /* wide inline tables scroll inside their card instead of widening the page */
 #proj-table, #alloc-form, .report-scroll, .modal-body .table { overflow-x: auto; max-width: 100%; }
 .calc-out, .calc-form { min-width: 0; }
+
+/* header display-currency switch */
+.cur-switch { flex: none; }
+.cur-switch button { font-family: var(--font-mono); font-size: 12px; padding: 5px 9px; }
+.cur-switch button.loading { opacity: .6; pointer-events: none; }
+@media (max-width: 640px) { .cur-switch button { padding: 5px 7px; font-size: 11px; } }
+@media (max-width: 480px) {
+  .topbar { gap: 6px; padding: 8px 10px; }
+  .topbar-actions { gap: 2px; }
+  .nw-pill { display: none; }            /* net worth is the first thing on the dashboard anyway */
+  .topbar .icon-btn { width: 32px; height: 32px; }
+}

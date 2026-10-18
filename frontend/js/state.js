@@ -1,5 +1,6 @@
 import { api } from './services/api.js';
-import { configure } from './utils/format.js';
+import { configure, setDisplay } from './utils/format.js';
+const DISPLAY_KEY = 'pwos.displayCurrency';
 const Core = window.WealthCore;
 
 /** Central store: raw records from the backend + derived views (all via WealthCore). */
@@ -23,6 +24,7 @@ class Store {
     this.data = d;
     this.memo.clear();
     configure({ base: d.settings.base_currency, tz: d.settings.timezone });
+    this.applyDisplay();
     this.live = Core.computeState(this.coreData(), { asOf: Date.now() });
     this.loadedAt = Date.now();
   }
@@ -33,6 +35,17 @@ class Store {
     return res;
   }
 
+  /** Preferred display currency for totals (per device). Only the base currency or USD. */
+  get displayPref() { let v = null; try { v = localStorage.getItem(DISPLAY_KEY); } catch { /* ignore */ } return v === 'USD' ? 'USD' : this.base; }
+  set displayPref(v) { try { localStorage.setItem(DISPLAY_KEY, v); } catch { /* ignore */ } }
+  /** USD rate (base per 1 USD) used for display, or null if none recorded. */
+  usdRate() { return this.base === 'USD' ? 1 : this.latestFx('USD')?.rate || null; }
+  applyDisplay() {
+    const want = this.displayPref;
+    const rate = want === 'USD' ? this.usdRate() : 1;
+    setDisplay(want === this.base || !rate ? null : want, rate);
+    return !(want === 'USD' && !rate);
+  }
   coreData() { const d = this.data; return { accounts: d.accounts, assets: d.assets, transactions: d.transactions, prices: d.prices, fx: d.fx, settings: d.settings }; }
   get settings() { return this.data?.settings || {}; }
   get base() { return this.settings.base_currency || 'PHP'; }

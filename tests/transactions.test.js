@@ -398,3 +398,24 @@ test('Market price sources: Binance symbol normalisation and batch recordPrices'
   const s = app.state();
   assert.equal(s.byAsset.length, 0); // no holdings yet, prices alone don't create value
 });
+
+test('Editing an asset: price currency can change after prices exist; history stays valued correctly', () => {
+  const app = makeApp();
+  const acc = bank(app, 1000000);
+  const btc = app.must('createAsset', { name: 'Bitcoin', ticker: 'BTC', asset_class: 'CRYPTO', currency: 'PHP' }).asset;
+  app.must('postTransaction', { type: 'BUY', account_id: acc, asset_id: btc.asset_id, quantity: 0.1, unit_price: 3000000, occurred_at: '2026-10-02T02:00:00Z' });
+  app.must('addPrice', { asset_id: btc.asset_id, price: 3500000, currency: 'PHP', as_of: '2026-10-03T02:00:00Z' });
+  const asOfBefore = Date.parse('2026-10-03T03:00:00Z');
+  assert.equal(app.state(asOfBefore).byAsset[0].valueBase, 350000);
+  const ed = app.must('updateAsset', { asset_id: btc.asset_id, name: 'Bitcoin (BTC)', currency: 'USD', price_source: 'BINANCE', price_source_id: 'BTCUSDT' }).asset;
+  assert.equal(ed.currency, 'USD');
+  assert.equal(ed.name, 'Bitcoin (BTC)');
+  // earlier PHP price still values history correctly
+  assert.equal(app.state(asOfBefore).byAsset[0].valueBase, 350000);
+  // new prices must use the new currency; valued via the USD rate
+  assert.equal(app.api('addPrice', { asset_id: btc.asset_id, price: 3600000, currency: 'PHP' }).error.code, 'VALIDATION');
+  app.must('addFxRate', { currency: 'USD', rate: 58, as_of: '2026-10-04T00:00:00Z' });
+  app.must('addPrice', { asset_id: btc.asset_id, price: 62000, currency: 'USD', as_of: '2026-10-04T02:00:00Z' });
+  assert.equal(app.state().byAsset[0].valueBase, Core.base2(0.1 * 62000 * 58));
+  assert.ok(app.must('getAuditLog', { entity_id: btc.asset_id }).rows.some((r) => r.action === 'UPDATE'));
+});

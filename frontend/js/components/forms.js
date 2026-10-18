@@ -360,7 +360,8 @@ export function accountForm(existing = null) {
 const CLASS_NAMES = { CRYPTO: 'crypto asset', STOCK: 'stock', OTHER: 'asset' };
 export function assetForm(cls, existing = null) {
   const requestId = uid('req');
-  const a = existing || { asset_class: cls, currency: store.base, price_source: 'MANUAL' };
+  // Crypto is quoted in USD by default (Binance USDT pairs); stocks and other assets in the base currency.
+  const a = existing || { asset_class: cls, currency: cls === 'CRYPTO' ? 'USD' : store.base, price_source: cls === 'CRYPTO' ? 'BINANCE' : 'MANUAL' };
   cls = a.asset_class;
   const cats = Core.OTHER_CATEGORIES.map((c) => [c, c[0] + c.slice(1).toLowerCase()]);
   modal({
@@ -369,7 +370,7 @@ export function assetForm(cls, existing = null) {
       ${row(field(cls === 'STOCK' ? 'Company name' : 'Name', input('name', { required: true, value: a.name, label: 'Name', placeholder: cls === 'CRYPTO' ? 'Bitcoin' : cls === 'STOCK' ? 'Ayala Land' : 'e.g. Café partnership' })),
             cls !== 'OTHER' ? field('Ticker', input('ticker', { value: a.ticker, required: true, label: 'Ticker', placeholder: cls === 'CRYPTO' ? 'BTC' : 'ALI' })) : field('Category', select('category', cats, a.category)))}
       ${row(cls === 'CRYPTO' ? field('Network (optional)', input('network', { value: a.network, placeholder: 'e.g. Bitcoin, ERC-20, TRC-20' })) : cls === 'STOCK' ? field('Exchange', input('exchange', { value: a.exchange, placeholder: 'PSE, NASDAQ…' })) : field('Unit label', input('unit_label', { value: a.unit_label, placeholder: '% ownership, oz, units' }), 'What “quantity” means for this asset'),
-            field('Price currency', input('currency', { required: true, value: a.currency, label: 'Currency', attrs: 'maxlength="6" style="text-transform:uppercase"' }), existing ? 'Fixed once prices exist' : 'Currency its market price is quoted in'))}
+            field('Price currency', input('currency', { required: true, value: a.currency, label: 'Currency', attrs: 'maxlength="6" style="text-transform:uppercase"' }), existing ? 'Can be changed; earlier prices keep their own currency' : 'Currency its market price is quoted in'))}
       ${cls === 'CRYPTO' ? html`${row(field('Price source', select('price_source', [['MANUAL', 'Manual entry'], ['BINANCE', 'Binance (automatic)'], ['COINGECKO', 'CoinGecko (automatic)']], a.price_source)), html`<div class="src-id">${field(html`<span class="src-label">Symbol</span>`, input('price_source_id', { value: a.price_source_id, placeholder: 'BTCUSDT' }), html`<span class="src-help"></span>`)}</div>`)}`: ''}
       ${field('Notes', textarea('notes', a.notes))}
       ${existing ? field('Status', select('status', [['ACTIVE', 'Active'], ['ARCHIVED', 'Archived']], a.status)) : ''}`,
@@ -384,10 +385,19 @@ export function assetForm(cls, existing = null) {
         form.price_source_id.placeholder = src === 'BINANCE' ? 'e.g. BTCUSDT, ETHUSDT, SOLUSDT' : 'e.g. bitcoin, ethereum';
         form.price_source_id.dataset.label = src === 'BINANCE' ? 'Binance symbol' : 'CoinGecko ID';
         $('.src-help', el).textContent = src === 'BINANCE'
-          ? 'Same as TradingView (BINANCE:BTCUSDT). Prices in USDT are converted to ' + store.base + ' with the latest USDT rate, or kept in USDT if the price currency is USDT.'
+          ? 'Same as TradingView (BINANCE:BTCUSDT). The USDT price is converted to the price currency (USD by default) using live USDT and USD rates.'
           : 'From the coin\'s CoinGecko page address, e.g. coingecko.com/en/coins/bitcoin → bitcoin.';
       };
       form.price_source.addEventListener('change', upd); upd();
+      // New coin + Binance: typing the ticker fills in the usual USDT pair (BTC → BTCUSDT) until edited by hand.
+      const sym = form.price_source_id;
+      if (!existing) {
+        let auto = !sym.value;
+        sym.addEventListener('input', () => { auto = !sym.value; });
+        form.ticker?.addEventListener('input', () => {
+          if (auto && form.price_source.value === 'BINANCE') sym.value = form.ticker.value.trim() ? form.ticker.value.trim().toUpperCase() + 'USDT' : '';
+        });
+      }
     },
     onSubmit: async (form) => {
       const d = formData(form);

@@ -60,7 +60,7 @@ export function render(root) {
   const firstSnap = store.snapshots()[0];
   mount(root, html`
     <div class="page-head">
-      <div><h1>Dashboard</h1><p class="muted">As of ${F.dateTime(Date.now())} · ${store.base} · valuations from recorded prices</p></div>
+      <div><h1>Dashboard</h1><p class="muted">As of ${F.dateTime(Date.now())} · shown in ${F.displayCurrency()}${F.displayCurrency() !== store.base ? ' (1 USD = ' + F.qty(store.usdRate()) + ' ' + store.base + ')' : ''} · valuations from recorded prices</p></div>
       <div class="head-actions">${segmented('period', periods, period)}
         ${period === 'CUSTOM' ? html`<div class="custom-range"><input type="date" id="cr-from" value="${custom?.from || Core.addDays(F.today(), -30)}" aria-label="From"><span>→</span><input type="date" id="cr-to" value="${custom?.to || F.today()}" aria-label="To"><button class="btn sm" id="cr-go">Apply</button></div>` : ''}</div>
     </div>
@@ -101,7 +101,7 @@ export function render(root) {
       ${chartBox('ch-asset', 'Asset allocation', '', 280)}
     </section>
     <section class="grid g2">
-      ${chartBox('ch-pl', 'Monthly investment result (P&L)', html`<span class="muted sm">${store.base}, flows excluded</span>`)}
+      ${chartBox('ch-pl', 'Monthly investment result (P&L)', html`<span class="muted sm">${F.displayCurrency()}, flows excluded</span>`)}
       ${chartBox('ch-flow', 'Monthly deposits vs withdrawals')}
     </section>
     <section class="grid g2">

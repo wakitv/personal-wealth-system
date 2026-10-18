@@ -1179,10 +1179,9 @@ function createWealthService(Core) {
     checkVersion(a, p.expected_updated_at);
     var before = JSON.parse(JSON.stringify(a));
     var patch = assetFields(p, ctx, false, a);
-    if (patch.currency && patch.currency !== a.currency) {
-      var priced = ctx.read('PriceHistory').some(function (r) { return r.asset_id === a.asset_id; });
-      if (priced) fail('VALIDATION', 'Price currency cannot change after prices are recorded');
-    }
+    // Changing the price currency is safe: every recorded price keeps its own currency and is
+    // valued with that currency's FX rate, so history is unaffected; new prices use the new currency.
+    // Trades are recorded in the account's currency and are not affected either.
     if (p.status !== undefined) patch.status = oneOf(p.status, ['ACTIVE', 'ARCHIVED'], 'status');
     patch.updated_at = ctx.nowIso;
     var after = ctx.deps.store.update('Assets', 'asset_id', a.asset_id, patch); ctx.invalidate('Assets');

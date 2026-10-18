@@ -58,8 +58,8 @@ export function marketAssets() {
  * Fetch and record prices. Returns { updated, fx, skipped: [..], errors: [..] }.
  * Throws only if nothing at all could be updated.
  */
-export async function refreshMarketPrices() {
-  const assets = marketAssets();
+export async function refreshMarketPrices({ fxOnly = false } = {}) {
+  const assets = fxOnly ? [] : marketAssets();
   const base = store.base, baseLc = base.toLowerCase();
   const nowIso = new Date().toISOString();
   const binance = assets.filter((a) => a.price_source === 'BINANCE');
@@ -78,7 +78,7 @@ export async function refreshMarketPrices() {
   let cg = {};
   try {
     cg = await getJson('https://api.coingecko.com/api/v3/simple/price?ids=' + encodeURIComponent([...geckoIds].join(',')) + '&vs_currencies=' + encodeURIComponent(vs));
-  } catch (e) { if (gecko.length || binance.length) errors.push('CoinGecko: ' + e.message); }
+  } catch (e) { errors.push('CoinGecko: ' + e.message); }
 
   const fxRows = [];
   const fxRate = {};
@@ -86,6 +86,14 @@ export async function refreshMarketPrices() {
     const q = cg[fxIds[c]];
     if (q && q[baseLc] > 0 && c !== base) { fxRate[c] = q[baseLc]; fxRows.push({ currency: c, rate: q[baseLc], as_of: nowIso, source: 'COINGECKO:' + fxIds[c] }); }
   });
+  // USD → base rate, derived from the same quote (base per USDT ÷ USD per USDT). Used for USD-priced
+  // assets and the header's USD display.
+  const t = cg[fxIds.USDT || 'tether'];
+  if (base !== 'USD' && t && t[baseLc] > 0 && t.usd > 0) {
+    const usd = Number((t[baseLc] / t.usd).toPrecision(10));
+    fxRate.USD = usd;
+    fxRows.push({ currency: 'USD', rate: usd, as_of: nowIso, source: 'COINGECKO:tether(' + baseLc + '/usd)' });
+  }
   const rateFor = (cur) => (cur === base ? 1 : fxRate[cur] || store.latestFx(cur)?.rate || null);
 
   const prices = [];
@@ -114,7 +122,7 @@ export async function refreshMarketPrices() {
 
   if (!prices.length && !fxRows.length) {
     const why = [...errors, ...skipped];
-    throw new Error(assets.length ? 'No prices updated. ' + why.join(' · ') : 'No assets use Binance or CoinGecko prices yet. Edit a coin and choose a price source.');
+    throw new Error(fxOnly ? 'Could not fetch the USD rate. ' + why.join(' · ') : assets.length ? 'No prices updated. ' + why.join(' · ') : 'No assets use Binance or CoinGecko prices yet. Edit a coin and choose a price source.');
   }
   await api.call('recordPrices', { prices, fx: fxRows });
   await store.load();

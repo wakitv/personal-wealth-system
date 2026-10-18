@@ -26,7 +26,15 @@ export function money(v, cur = BASE, { sign = false, compact = false } = {}) {
   const pre = v < 0 ? '−' : sign && v > 0 ? '+' : '';
   return pre + s;
 }
-export const php = (v, o) => money(v, BASE, o);
+/**
+ * Display currency for base-currency totals (header PHP / USD switch). Records stay in the base
+ * currency; only how totals are shown changes. rate = base units per 1 display unit.
+ */
+let DISPLAY = { cur: null, rate: 1 };
+export function setDisplay(cur, rate) { DISPLAY = cur && cur !== BASE && rate > 0 ? { cur, rate } : { cur: null, rate: 1 }; }
+export const displayCurrency = () => DISPLAY.cur || BASE;
+/** A base-currency (PHP) amount, shown in the selected display currency. */
+export const php = (v, o) => (DISPLAY.cur && v !== null && v !== undefined && isFinite(v) ? money(v / DISPLAY.rate, DISPLAY.cur, o) : money(v, BASE, o));
 export function qty(v) {
   if (v === null || v === undefined || !isFinite(v)) return '—';
   return nf('q', { maximumFractionDigits: 8 }).format(v);
@@ -38,8 +46,8 @@ export function pct(v, { sign = true, dp = 2 } = {}) {
 }
 export const tone = (v) => (v > 0.0049 ? 'up' : v < -0.0049 ? 'down' : 'flat');
 /** Coloured signed amount. */
-export const pl = (v, cur) => html`<span class="amt ${tone(v)}">${money(v, cur, { sign: true })}</span>`;
-export const amt = (v, cur, o) => html`<span class="amt">${money(v, cur, o)}</span>`;
+export const pl = (v, cur) => html`<span class="amt ${tone(v)}">${cur && cur !== BASE ? money(v, cur, { sign: true }) : php(v, { sign: true })}</span>`;
+export const amt = (v, cur, o) => html`<span class="amt">${cur && cur !== BASE ? money(v, cur, o) : php(v, o)}</span>`;
 export const date = (v) => Core.formatDate(v, TZ);
 export const dateTime = (v) => Core.formatDateTime(v, TZ);
 export const dateStr = (s) => Core.formatDateStr(s);
