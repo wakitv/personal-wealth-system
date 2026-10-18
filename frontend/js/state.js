@@ -43,7 +43,7 @@ class Store {
   account(id) { return this.data.accounts.find((a) => a.account_id === id); }
   asset(id) { return this.data.assets.find((a) => a.asset_id === id); }
   activeAccounts() { return this.data.accounts.filter((a) => a.status !== 'ARCHIVED'); }
-  activeAssets(cls) { return this.data.assets.filter((a) => a.status !== 'ARCHIVED' && (!cls || a.asset_class === cls)); }
+  activeAssets(cls) { return this.data.assets.filter((a) => a.status !== 'ARCHIVED' && a.status !== 'REMOVED' && (!cls || a.asset_class === cls)); }
   /** Transactions newest first, normalised. */
   txs() {
     if (!this.memo.has('txs')) this.memo.set('txs', this.data.transactions.map(Core.normTx).sort((a, b) => (b.t - a.t) || (b.seq - a.seq)));

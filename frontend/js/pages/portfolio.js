@@ -2,7 +2,7 @@ import { html, mount, $ } from '../utils/dom.js';
 import * as F from '../utils/format.js';
 import { store } from '../state.js';
 import { dataTable, emptyState, statCard, chart, chartBox, cssVar, toast, errorMessage, confirmDialog, PALETTE } from '../components/ui.js';
-import { assetForm, assetTxForm, priceForm, valuationForm, assetTransferForm, cashTxForm } from '../components/forms.js';
+import { assetForm, assetTxForm, priceForm, valuationForm, assetTransferForm, cashTxForm, removeAssetForm } from '../components/forms.js';
 import { txColumns } from './transactions.js';
 import { qualityBanner } from './dashboard.js';
 import { api } from '../services/api.js';
@@ -13,7 +13,7 @@ const CLASS = { CRYPTO: { title: 'Crypto', route: 'crypto', noun: 'crypto asset'
 function rowsFor(cls) {
   const st = store.live;
   const by = new Map(st.byAsset.map((a) => [a.asset_id, a]));
-  return store.data.assets.filter((a) => (!cls || a.asset_class === cls) && (a.status !== 'ARCHIVED' || by.get(a.asset_id)?.qty))
+  return store.data.assets.filter((a) => a.status !== 'REMOVED' && (!cls || a.asset_class === cls) && (a.status !== 'ARCHIVED' || by.get(a.asset_id)?.qty))
     .map((a) => ({ ...(by.get(a.asset_id) || { qty: 0, costBase: 0, valueBase: 0, unrealizedBase: 0, realizedBase: 0, incomeBase: 0, feesBase: 0, locations: [], price: null }), asset: a, asset_id: a.asset_id, name: a.name, ticker: a.ticker }));
 }
 function priceCell(r) {
@@ -35,7 +35,7 @@ function holdingColumns(cls, total) {
     { key: 'realizedBase', label: 'Realized', align: 'r', sort: (r) => r.realizedBase, render: (r) => (r.realizedBase ? F.pl(r.realizedBase) : html`<span class="muted">—</span>`) },
     { key: 'incomeBase', label: cls === 'STOCK' ? 'Dividends' : 'Income', align: 'r', sort: (r) => r.incomeBase, render: (r) => (r.incomeBase ? F.php(r.incomeBase) : html`<span class="muted">—</span>`) },
     { key: 'alloc', label: 'Alloc.', align: 'r', sort: (r) => r.valueBase, render: (r) => (total > 0 ? F.pct(r.valueBase / total * 100, { sign: false, dp: 1 }) : '—') },
-    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}">${cls === 'OTHER' ? 'Add' : 'Buy'}</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}</div>` }
+    { key: 'act', label: '', noSort: true, align: 'r', render: (r) => html`<div class="row-actions">${r.asset.status !== 'ARCHIVED' ? html`<button class="btn xs" data-buy="${r.asset_id}">${cls === 'OTHER' ? 'Add' : 'Buy'}</button>${r.qty ? html`<button class="btn xs" data-sell="${r.asset_id}">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button>` : ''}` : ''}${r.qty ? html`<button class="btn xs ghost" data-price="${r.asset_id}">${cls === 'OTHER' ? 'Value' : 'Price'}</button>` : ''}<button class="icon-btn" data-remove="${r.asset_id}" aria-label="Remove ${r.ticker || r.name}" title="Remove asset">${F.icon('trash')}</button></div>` }
   ];
   return cols;
 }
@@ -77,6 +77,8 @@ export function render(root, params, route) {
     if (b) return assetTxForm(cls === 'OTHER' ? 'ADD_POSITION' : 'BUY', { asset_id: b.dataset.buy, asset_class: cls });
     if (sl) return assetTxForm(cls === 'OTHER' ? 'REDUCE_POSITION' : 'SELL', { asset_id: sl.dataset.sell, asset_class: cls, account_id: store.live.positions.find((p) => p.asset_id === sl.dataset.sell)?.account_id });
     if (pr) { const a = store.asset(pr.dataset.price); return cls === 'OTHER' ? valuationForm(a) : priceForm(a); }
+    const rm = e.target.closest('[data-remove]');
+    if (rm) return removeAssetForm(store.asset(rm.dataset.remove));
     if (e.target.closest('#refresh')) refreshPrices(e.target.closest('#refresh'));
   };
 }
@@ -128,6 +130,7 @@ function renderOverview(root) {
 function renderAsset(root, id) {
   const a = store.asset(id);
   if (!a) { mount(root, emptyState('Asset not found', '', html`<a class="btn" href="#/portfolio">Back</a>`)); return; }
+  if (a.status === 'REMOVED') { mount(root, emptyState('This asset was removed', 'Its transactions were reversed and remain visible in Transactions (filter by Reversed) and the audit log.', html`<a class="btn" href="#/${CLASS[a.asset_class].route}">Back to ${CLASS[a.asset_class].title}</a>`)); return; }
   const r = rowsFor(null).find((x) => x.asset_id === id) || { qty: 0, costBase: 0, valueBase: 0, unrealizedBase: 0, realizedBase: 0, incomeBase: 0, feesBase: 0, locations: [] };
   const cls = a.asset_class, meta = CLASS[cls];
   const txs = store.txs().filter((t) => t.asset_id === id && t.type !== 'REVERSAL');
@@ -137,7 +140,7 @@ function renderAsset(root, id) {
     <div class="page-head"><div><a class="back sm" href="#/${meta.route}">← ${meta.title}</a><h1>${a.ticker ? a.ticker + ' · ' : ''}${a.name}</h1>
       <p class="muted">${[cls === 'OTHER' ? (a.category || '').toLowerCase() : meta.title.replace(/s$/, ''), a.network, a.exchange, 'priced in ' + a.currency, a.price_source === 'COINGECKO' ? 'CoinGecko: ' + a.price_source_id : 'manual prices'].filter(Boolean).join(' · ')}${archived ? ' · archived' : ''}</p></div>
       <div class="head-actions wrap">${archived ? '' : html`<button class="btn sm" data-x="buy">${cls === 'OTHER' ? 'Add to position' : 'Buy'}</button>${r.qty ? html`<button class="btn sm" data-x="sell">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button><button class="btn sm" data-x="move">Move</button>` : ''}<button class="btn sm" data-x="income">Income</button><button class="btn sm" data-x="price">${cls === 'OTHER' ? 'Update valuation' : 'Update price'}</button><button class="btn sm" data-x="addpos">Add existing</button>`}
-        <button class="btn sm ghost" data-x="edit">Edit</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button></div></div>
+        <button class="btn sm ghost" data-x="edit">Edit</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button><button class="btn sm danger" data-x="remove">${F.icon('trash')} Remove</button></div></div>
     <section class="grid g5">
       ${statCard({ label: 'Quantity', value: F.qty(r.qty) + ' ' + (a.unit_label || ''), sub: r.locations.map((l) => store.account(l.account_id)?.name + ': ' + F.qty(l.qty)).join(' · ') })}
       ${statCard({ label: 'Market value', value: F.php(r.valueBase), sub: priceCell(r) })}
@@ -166,6 +169,7 @@ function renderAsset(root, id) {
     if (x === 'income') cashTxForm('INCOME', { asset_id: id, account_id: firstAcc, category: cls === 'STOCK' ? 'DIVIDEND' : cls === 'CRYPTO' ? 'STAKING' : 'OTHER' });
     if (x === 'price') (cls === 'OTHER' ? valuationForm : priceForm)(a);
     if (x === 'edit') assetForm(cls, a);
+    if (x === 'remove') removeAssetForm(a, () => { location.hash = '#/' + meta.route; });
     if (x === 'archive') {
       if (!archived && r.qty) { toast('Sell, reduce or move out the remaining position before archiving.', 'error'); return; }
       const ok = await confirmDialog({ title: archived ? 'Restore asset' : 'Archive asset', danger: !archived, confirmLabel: archived ? 'Restore' : 'Archive', message: 'History is kept either way.' });

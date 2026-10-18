@@ -125,9 +125,9 @@ function createWealthService(Core) {
     if (needActive && a.status === 'ARCHIVED') fail('VALIDATION', 'Account "' + a.name + '" is archived');
     return a;
   }
-  function getAsset(ctx, id, needActive) {
+  function getAsset(ctx, id, needActive, allowRemoved) {
     var a = findBy(ctx.read('Assets'), 'asset_id', String(id || ''));
-    if (!a) fail('NOT_FOUND', 'Asset not found', { asset_id: id });
+    if (!a || (a.status === 'REMOVED' && !allowRemoved)) fail('NOT_FOUND', 'Asset not found', { asset_id: id });
     if (needActive && a.status === 'ARCHIVED') fail('VALIDATION', 'Asset "' + a.name + '" is archived');
     return a;
   }
@@ -365,7 +365,7 @@ function createWealthService(Core) {
     var row = assetFields(p, ctx, true);
     row.asset_id = ctx.id('AST'); row.status = 'ACTIVE'; row.created_at = ctx.nowIso; row.updated_at = ctx.nowIso;
     if (row.ticker && row.asset_class !== 'OTHER') {
-      var dup = ctx.read('Assets').some(function (a) { return a.ticker === row.ticker && a.asset_class === row.asset_class && a.status !== 'ARCHIVED' && (a.exchange || '') === (row.exchange || ''); });
+      var dup = ctx.read('Assets').some(function (a) { return a.ticker === row.ticker && a.asset_class === row.asset_class && a.status === 'ACTIVE' && (a.exchange || '') === (row.exchange || ''); });
       if (dup) fail('CONFLICT', 'An active ' + row.asset_class.toLowerCase() + ' asset with ticker ' + row.ticker + ' already exists');
     }
     ctx.deps.store.append('Assets', [row]); ctx.invalidate('Assets');
@@ -386,6 +386,36 @@ function createWealthService(Core) {
     var after = ctx.deps.store.update('Assets', 'asset_id', a.asset_id, patch); ctx.invalidate('Assets');
     ctx.audit('UPDATE', 'Asset', a.asset_id, before, after);
     return { asset: after };
+  } };
+
+  /**
+   * Remove an asset. Nothing is deleted:
+   *  - no effective transactions → the asset is marked REMOVED (hidden everywhere);
+   *  - otherwise, with reverse_history = true, every effective transaction for the asset (and its
+   *    linked legs, e.g. the other side of an asset transfer or a purchase's funding deposit) is
+   *    reversed in one validated commit, then the asset is marked REMOVED. Purchases return their
+   *    cash, sales are undone, income is removed. Refused if that would overdraw any account.
+   */
+  A.removeAsset = { write: true, fn: function (p, ctx) {
+    var a = getAsset(ctx, p.asset_id, false);
+    var reason = str(p.reason, 'reason', { required: true, max: 500 });
+    var all = ctx.read('Transactions');
+    var own = all.filter(function (t) { return t.asset_id === a.asset_id && t.status !== 'REVERSED' && t.type !== 'REVERSAL'; });
+    var reversed = [];
+    if (own.length) {
+      if (!bool(p.reverse_history)) fail('CONFLICT', '"' + a.name + '" has ' + own.length + ' transaction(s). Confirm reversing its history to remove it, or archive it instead to keep the history.', { transactions: own.length });
+      var seen = {}, group = [];
+      own.forEach(function (t) { groupOf(ctx, t).forEach(function (g) { if (!seen[g.tx_id]) { seen[g.tx_id] = 1; group.push(g); } }); });
+      var revRows = reversalRows(ctx, group, 'Asset removed: ' + reason);
+      commitLedger(ctx, revRows, group.map(function (t) { return t.tx_id; }));
+      applyReversal(ctx, group, revRows);
+      reversed = group.map(function (t) { return t.tx_id; });
+    }
+    var before = JSON.parse(JSON.stringify(a));
+    var after = ctx.deps.store.update('Assets', 'asset_id', a.asset_id, { status: 'REMOVED', updated_at: ctx.nowIso });
+    ctx.invalidate('Assets');
+    ctx.audit('REMOVE', 'Asset', a.asset_id, before, { status: 'REMOVED', reason: reason, reversed: reversed });
+    return { asset: after, reversed: reversed };
   } };
 
   // ---- ledger
@@ -542,23 +572,28 @@ function createWealthService(Core) {
   A.refreshPrices = { write: true, fn: function (p, ctx) {
     if (!ctx.deps.http) fail('UNSUPPORTED', 'Automatic prices need the Apps Script backend');
     var s = settings(ctx), base = s.base_currency.toLowerCase();
-    var assets = ctx.read('Assets').filter(function (a) { return a.status !== 'ARCHIVED' && a.price_source === 'COINGECKO' && a.price_source_id; });
+    var assets = ctx.read('Assets').filter(function (a) { return a.status === 'ACTIVE' && a.price_source === 'COINGECKO' && a.price_source_id; });
     var fxIds = {}; try { fxIds = JSON.parse(s.coingecko_fx_ids || '{}'); } catch (e) { fxIds = {}; }
     var ids = {}; assets.forEach(function (a) { ids[a.price_source_id] = 1; }); Object.keys(fxIds).forEach(function (c) { ids[fxIds[c]] = 1; });
     var list = Object.keys(ids);
-    if (!list.length) return { prices: [], fx: [], note: 'No assets are set to use CoinGecko prices' };
+    if (!list.length) fail('VALIDATION', 'No crypto assets are set to use CoinGecko. Edit the coin and set Price source to CoinGecko with its CoinGecko ID.');
     var res = ctx.deps.http.getJson('https://api.coingecko.com/api/v3/simple/price?ids=' + encodeURIComponent(list.join(',')) + '&vs_currencies=' + base + '&include_last_updated_at=true');
     var prices = [], fxRows = [], skipped = [];
+    // Fetched quotes are stamped with the fetch time so they supersede older manual entries;
+    // CoinGecko's own "last updated" time is kept in the notes.
+    var quoted = function (q) { return q.last_updated_at ? ' (CoinGecko updated ' + new Date(q.last_updated_at * 1000).toISOString() + ')' : ''; };
     assets.forEach(function (a) {
+      var label = a.ticker || a.name;
+      if (a.currency.toUpperCase() !== s.base_currency) { skipped.push(label + ': price currency is ' + a.currency + ', must be ' + s.base_currency); return; }
       var q = res[a.price_source_id];
-      if (!q || !(q[base] > 0)) { skipped.push(a.ticker || a.name); return; }
-      if (a.currency.toLowerCase() !== base) { skipped.push((a.ticker || a.name) + ' (asset currency ' + a.currency + ' ≠ ' + s.base_currency + ')'); return; }
-      prices.push({ price_id: ctx.id('PRC'), asset_id: a.asset_id, price: q[base], currency: s.base_currency, as_of: new Date((q.last_updated_at || ctx.nowMs / 1000) * 1000).toISOString(), source: 'COINGECKO', is_estimate: false, notes: 'coingecko:' + a.price_source_id, created_at: ctx.nowIso });
+      if (!q || !(q[base] > 0)) { skipped.push(label + ': CoinGecko has no price for ID "' + a.price_source_id + '" (check the ID)'); return; }
+      prices.push({ price_id: ctx.id('PRC'), asset_id: a.asset_id, price: q[base], currency: s.base_currency, as_of: ctx.nowIso, source: 'COINGECKO', is_estimate: false, notes: 'coingecko:' + a.price_source_id + quoted(q), created_at: ctx.nowIso });
     });
     Object.keys(fxIds).forEach(function (c) {
       var q = res[fxIds[c]];
-      if (q && q[base] > 0 && c.toUpperCase() !== s.base_currency) fxRows.push({ fx_id: ctx.id('FX'), currency: c.toUpperCase(), rate: q[base], as_of: new Date((q.last_updated_at || ctx.nowMs / 1000) * 1000).toISOString(), source: 'COINGECKO:' + fxIds[c], created_at: ctx.nowIso });
+      if (q && q[base] > 0 && c.toUpperCase() !== s.base_currency) fxRows.push({ fx_id: ctx.id('FX'), currency: c.toUpperCase(), rate: q[base], as_of: ctx.nowIso, source: 'COINGECKO:' + fxIds[c], created_at: ctx.nowIso });
     });
+    if (assets.length && !prices.length) fail('VALIDATION', 'No prices were updated. ' + skipped.join(' · '));
     if (prices.length) ctx.deps.store.append('PriceHistory', prices);
     if (fxRows.length) ctx.deps.store.append('FXRates', fxRows);
     ctx.invalidate('PriceHistory'); ctx.invalidate('FXRates');

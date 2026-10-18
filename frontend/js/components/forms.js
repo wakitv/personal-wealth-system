@@ -395,6 +395,43 @@ export function addAssetChooser() {
   });
 }
 
+// ------------------------------------------------------------------ remove asset
+/**
+ * Remove an asset. With no history it is simply removed. With history, every transaction for it
+ * is reversed first (purchases refunded, sales undone) — nothing is deleted, all audited.
+ */
+export function removeAssetForm(asset, onDone) {
+  const requestId = uid('req');
+  const txs = store.txs().filter((t) => t.asset_id === asset.asset_id && Core.isEffective(t));
+  const counts = {};
+  txs.forEach((t) => { const l = F.typeLabel(t.type); counts[l] = (counts[l] || 0) + 1; });
+  const held = store.live.positions.filter((p) => p.asset_id === asset.asset_id).reduce((s, p) => s + p.qty, 0);
+  const label = (asset.ticker ? asset.ticker + ' · ' : '') + asset.name;
+  modal({
+    title: 'Remove ' + label, danger: true, submitLabel: txs.length ? 'Reverse history & remove' : 'Remove asset',
+    body: txs.length ? html`
+      <div class="banner danger sm">${F.icon('alert')}<div><strong>This asset has ${txs.length} transaction${txs.length === 1 ? '' : 's'}</strong>
+        (${Object.entries(counts).map(([k, v]) => v + ' ' + k.toLowerCase()).join(', ')})${held ? html` and you currently hold <strong>${F.qty(held)}</strong>` : ''}.</div></div>
+      <p class="sm">Removing it <strong>reverses all of them</strong>, as if they never happened:</p>
+      <ul class="sm muted" style="margin:0;padding-left:18px">
+        <li>purchases are refunded to the account's cash, sales and income are undone;</li>
+        <li>linked entries (transfers of this asset, funding deposits) are reversed too;</li>
+        <li>nothing is deleted — originals and reversals stay in the ledger and audit log.</li></ul>
+      <p class="sm">Use this for an asset <strong>added by mistake</strong>. If you really owned it and sold or moved it out, use <strong>Archive</strong> instead to keep your real history and P&amp;L.</p>
+      <label class="check"><input type="checkbox" name="confirm" required data-label="Confirmation"> <span>I understand — reverse ${txs.length} transaction${txs.length === 1 ? '' : 's'} and remove this asset</span></label>
+      ${field('Reason (kept in the audit log)', input('reason', { required: true, label: 'Reason', placeholder: 'e.g. added by mistake, wrong price currency' }))}`
+      : html`<p class="sm">This asset has no transactions. It will be removed from your portfolio and forms. Its price records stay in the audit trail.</p>
+      ${field('Reason (kept in the audit log)', input('reason', { required: true, label: 'Reason', placeholder: 'e.g. duplicate, wrong currency' }))}`,
+    onSubmit: async (form) => {
+      const d = formData(form);
+      if (txs.length && !d.confirm) throw new Error('Tick the confirmation box to reverse the history.');
+      const res = await store.write('removeAsset', { asset_id: asset.asset_id, reason: d.reason, reverse_history: txs.length > 0 }, requestId);
+      toast(res.reversed.length ? `${label} removed · ${res.reversed.length} transaction(s) reversed` : `${label} removed`);
+      onDone?.();
+    }
+  });
+}
+
 // ------------------------------------------------------------------ goals
 export function goalForm(existing = null) {
   const requestId = uid('req');
