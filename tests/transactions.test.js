@@ -307,7 +307,94 @@ test('Price refresh uses server-side HTTP and records source + timestamp', () =>
   assert.equal(r.prices[0].source, 'COINGECKO');
   assert.equal(r.fx[0].currency, 'USDT');
   assert.equal(app.data().prices[0].price, 3500000);
+  assert.equal(app.data().prices[0].as_of, new Date(app.now()).toISOString(), 'stamped with fetch time');
+  // a wrong ID or non-PHP asset is explained, not silently "successful"
+  const bad = makeApp({ http: { getJson: () => ({}) } });
+  bad.must('createAsset', { name: 'Typo', ticker: 'TYP', asset_class: 'CRYPTO', currency: 'PHP', price_source: 'COINGECKO', price_source_id: 'bitcoinn' });
+  bad.must('createAsset', { name: 'Ether', ticker: 'ETH', asset_class: 'CRYPTO', currency: 'USDT', price_source: 'COINGECKO', price_source_id: 'ethereum' });
+  const e = bad.api('refreshPrices', {});
+  assert.equal(e.ok, false);
+  assert.match(e.error.message, /check the ID/);
+  assert.match(e.error.message, /must be PHP/);
+  // no coins configured: FX rates (USDT) still refresh
+  const fxOnly = makeApp({ http: { getJson: () => ({ tether: { php: 58 } }) } }).must('refreshPrices', {});
+  assert.equal(fxOnly.fx[0].rate, 58);
   // sandbox (no http) explains instead of faking
   const sb = makeApp();
   assert.equal(sb.api('refreshPrices', {}).error.code, 'UNSUPPORTED');
+});
+
+test('Remove asset: unused asset is hidden; asset with history requires confirmation and reverses it all', () => {
+  const app = makeApp();
+  const acc = bank(app, 10000, 'Broker');
+  const w = bank(app, 0, 'Wallet');
+  // unused asset → removed immediately, ticker can be reused
+  const typo = app.must('createAsset', { name: 'Bitcoin', ticker: 'BTC', asset_class: 'CRYPTO', currency: 'USDT' }).asset;
+  assert.equal(app.api('removeAsset', { asset_id: typo.asset_id }).error.code, 'VALIDATION'); // reason required
+  const r0 = app.must('removeAsset', { asset_id: typo.asset_id, reason: 'wrong currency' });
+  assert.equal(r0.asset.status, 'REMOVED');
+  assert.deepEqual(r0.reversed, []);
+  const btc = app.must('createAsset', { name: 'Bitcoin', ticker: 'BTC', asset_class: 'CRYPTO', currency: 'PHP' }).asset.asset_id;
+  // removed asset can't be used, priced or removed again
+  assert.equal(app.api('addPrice', { asset_id: typo.asset_id, price: 1 }).error.code, 'NOT_FOUND');
+  assert.equal(app.api('removeAsset', { asset_id: typo.asset_id, reason: 'x' }).error.code, 'NOT_FOUND');
+
+  // asset with buy, transfer, sale, income
+  app.must('postTransaction', { type: 'BUY', account_id: acc, asset_id: btc, quantity: 0.002, unit_price: 3000000, fee: 10, occurred_at: '2026-10-02T02:00:00Z' });
+  app.must('postAssetTransfer', { asset_id: btc, from_account_id: acc, to_account_id: w, quantity: 0.001, occurred_at: '2026-10-03T02:00:00Z' });
+  app.must('postTransaction', { type: 'SELL', account_id: acc, asset_id: btc, quantity: 0.0005, unit_price: 3200000, occurred_at: '2026-10-04T02:00:00Z' });
+  const before = app.state();
+  assert.ok(before.byAsset.find((a) => a.asset_id === btc).qty > 0);
+  const refused = app.api('removeAsset', { asset_id: btc, reason: 'test' });
+  assert.equal(refused.error.code, 'CONFLICT');
+  assert.equal(refused.error.details.transactions, 4);
+  const r = app.must('removeAsset', { asset_id: btc, reason: 'entered by mistake', reverse_history: true });
+  assert.equal(r.reversed.length, 4);
+  const s = app.state();
+  assert.equal(s.accounts[acc].cashNative, 10000, 'cash restored exactly');
+  assert.equal(s.positions.filter((p) => p.asset_id === btc).length, 0);
+  assert.equal(s.summary.realized, 0);
+  assert.equal(s.summary.netWorth, 10000);
+  assert.equal(Core.checkIntegrity(app.data()).ok, true);
+  assert.equal(app.data().transactions.length, 1 + 4 + 4, 'nothing deleted: opening + originals + reversals kept');
+  assert.ok(app.must('getAuditLog', { entity_id: btc }).rows.some((x) => x.action === 'REMOVE'));
+});
+
+test('Remove asset is refused if reversing its history would overdraw an account', () => {
+  const app = makeApp();
+  const acc = bank(app, 1000);
+  const stk = app.must('createAsset', { name: 'S', ticker: 'S', asset_class: 'STOCK', currency: 'PHP' }).asset.asset_id;
+  app.must('postTransaction', { type: 'BUY', account_id: acc, asset_id: stk, quantity: 10, unit_price: 50, occurred_at: '2026-10-02T02:00:00Z' });
+  app.must('postTransaction', { type: 'SELL', account_id: acc, asset_id: stk, quantity: 10, unit_price: 100, occurred_at: '2026-10-03T02:00:00Z' });
+  app.must('postTransaction', { type: 'WITHDRAWAL', account_id: acc, gross_amount: 1400, occurred_at: '2026-10-04T02:00:00Z' });
+  const r = app.api('removeAsset', { asset_id: stk, reason: 'x', reverse_history: true });
+  assert.equal(r.error.code, 'INSUFFICIENT_FUNDS');
+  assert.equal(app.data().assets.find((a) => a.asset_id === stk).status, 'ACTIVE', 'nothing changed');
+});
+
+test('Market price sources: Binance symbol normalisation and batch recordPrices', () => {
+  const app = makeApp();
+  const a = app.must('createAsset', { name: 'Bitcoin', ticker: 'BTC', asset_class: 'CRYPTO', currency: 'PHP', price_source: 'BINANCE', price_source_id: 'binance:btc/usdt' }).asset;
+  assert.equal(a.price_source_id, 'BTCUSDT');
+  assert.equal(app.api('createAsset', { name: 'X', ticker: 'X', asset_class: 'CRYPTO', price_source: 'BINANCE', price_source_id: '??' }).error.code, 'VALIDATION');
+  assert.equal(app.api('createAsset', { name: 'Y', ticker: 'Y', asset_class: 'CRYPTO', price_source: 'COINGECKO', price_source_id: 'Bad ID!' }).error.code, 'VALIDATION');
+  // switching back to manual clears the id; updating only the id keeps the source
+  const e = app.must('createAsset', { name: 'Ether', ticker: 'ETH', asset_class: 'CRYPTO', currency: 'USDT', price_source: 'COINGECKO', price_source_id: 'ethereum' }).asset;
+  assert.equal(app.must('updateAsset', { asset_id: e.asset_id, price_source_id: 'Ethereum' }).asset.price_source_id, 'ethereum');
+  assert.equal(app.must('updateAsset', { asset_id: e.asset_id, price_source: 'MANUAL' }).asset.price_source_id, '');
+  // batch record
+  const r = app.must('recordPrices', { prices: [{ asset_id: a.asset_id, price: 3600000, currency: 'PHP', source: 'BINANCE', notes: 'BTCUSDT 62000 × 58.06' }, { asset_id: e.asset_id, price: 2500, currency: 'USDT', source: 'BINANCE' }], fx: [{ currency: 'USDT', rate: 58.06, source: 'COINGECKO:tether' }] });
+  assert.equal(r.prices.length, 2);
+  const d = app.data();
+  assert.equal(d.prices.find((x) => x.asset_id === a.asset_id).source, 'BINANCE');
+  assert.equal(d.fx[0].rate, 58.06);
+  // wrong currency, unknown source, removed asset, empty → rejected; nothing partially written
+  const n = app.data().prices.length;
+  assert.equal(app.api('recordPrices', { prices: [{ asset_id: a.asset_id, price: 1, currency: 'USDT', source: 'BINANCE' }] }).error.code, 'VALIDATION');
+  assert.equal(app.api('recordPrices', { prices: [{ asset_id: a.asset_id, price: 1, currency: 'PHP', source: 'MADEUP' }] }).error.code, 'VALIDATION');
+  assert.equal(app.api('recordPrices', { prices: [{ asset_id: a.asset_id, price: -1, currency: 'PHP', source: 'BINANCE' }] }).error.code, 'VALIDATION');
+  assert.equal(app.api('recordPrices', {}).error.code, 'VALIDATION');
+  assert.equal(app.data().prices.length, n);
+  const s = app.state();
+  assert.equal(s.byAsset.length, 0); // no holdings yet, prices alone don't create value
 });

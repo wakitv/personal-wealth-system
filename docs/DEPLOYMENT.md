@@ -88,7 +88,8 @@ git push -u origin main
 1. On GitHub, open **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 2. The included workflow `.github/workflows/pages.yml` runs the tests and publishes the `frontend/` folder on every push to `main`.
 3. Your site will be at `https://<you>.github.io/personal-wealth-os/`.
-4. A public repository is fine: the frontend contains no secrets. GitHub Pages on a private repository requires a paid GitHub plan.
+4. **Seeing the README instead of the app?** Pages is set to *Deploy from a branch*. Switch the source to **GitHub Actions**. If you keep the branch setting, the top-level `index.html` redirects visitors to `frontend/`, so the app still opens at `https://<you>.github.io/<repo>/`.
+5. A public repository is fine: the frontend contains no secrets. GitHub Pages on a private repository requires a paid GitHub plan.
 
 **Configuration:** either
 * edit `frontend/js/config.js` and set `API_URL` and `GOOGLE_CLIENT_ID`, then commit; or
@@ -137,8 +138,16 @@ git push -u origin main
 - [ ] First backup downloaded and stored privately
 - [ ] You have read the limitations in [SECURITY.md](SECURITY.md)
 
-## Optional: automatic crypto prices
+## Automatic crypto prices (Binance or CoinGecko)
 
-For each crypto asset, set **Price source: CoinGecko** and its **CoinGecko ID** (e.g. `bitcoin`, `ethereum`). Set the asset's price currency to `PHP`. Use **Crypto → Refresh prices**, or enable **Settings → Daily automatic price refresh** so the nightly job fetches prices before taking the snapshot.
+For each crypto asset, choose **Edit → Price source** and set one of:
+* **Binance (automatic)** with the pair symbol, e.g. `BTCUSDT`. This is the same symbol TradingView shows as `BINANCE:BTCUSDT`, and pasting that form also works.
+* **CoinGecko (automatic)** with the coin's ID, e.g. `bitcoin`.
 
-USDT/USDC → PHP FX rates can come from the same call, via the `coingecko_fx_ids` setting. CoinGecko's free public API has rate limits; the app falls back to your manual prices and labels their age.
+Prices are fetched by **your browser**, not by Apps Script: Binance blocks Google's servers (HTTP 451), and CoinGecko throttles them. The backend then saves them with source and timestamp (`recordPrices`).
+
+They update automatically when you open the app, at most every 15 minutes; you can turn this off in Settings. You can also click **Crypto → Refresh prices**.
+
+A Binance `…USDT` price is converted to PHP with the USDT→PHP rate fetched from CoinGecko at the same time. If that fetch fails, your latest recorded USDT rate is used. If the asset's price currency is USDT, the price is stored as-is.
+
+Stocks and other assets use manual prices; TradingView has no public price API.

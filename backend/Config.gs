@@ -6,6 +6,7 @@
  *   GOOGLE_CLIENT_ID  OAuth 2.0 Web client ID used by the frontend's Google sign-in
  *   ALLOWED_EMAILS    Comma-separated Google account emails allowed to use the app
  *   ALLOWED_ORIGIN    (informational) your GitHub Pages origin, e.g. https://you.github.io
+ *   COINGECKO_API_KEY (optional) free CoinGecko Demo API key for automatic crypto prices
  */
 function getConfig_() {
   var p = PropertiesService.getScriptProperties();

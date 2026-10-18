@@ -133,6 +133,35 @@ with sync_playwright() as p:
     expect(row).to_contain_text('+₱6,000.00')
     shot(page, '05-crypto')
 
+    # Automatic prices from the browser: Binance BTCUSDT × CoinGecko USDT→PHP (both mocked)
+    ctx.route(re.compile(r'^https://data-api\.binance\.vision/'), lambda r: r.fulfill(status=200, content_type='application/json', headers={'Access-Control-Allow-Origin': '*'}, body='[{"symbol":"ETHUSDT","price":"2500.00"},{"symbol":"BTCUSDT","price":"60000.00"}]'))
+    ctx.route(re.compile(r'^https://api\.coingecko\.com/'), lambda r: r.fulfill(status=200, content_type='application/json', headers={'Access-Control-Allow-Origin': '*'}, body='{"tether":{"php":58,"usd":1}}'))
+    page.locator('tr', has_text='BTC').locator('a').first.click()
+    page.locator('[data-x="edit"]').click()
+    fill_modal(page, {'price_source': 'BINANCE'})
+    page.locator('.modal [name="price_source"]').dispatch_event('change')
+    fill_modal(page, {'price_source_id': 'BINANCE:BTCUSDT'})
+    submit_modal(page)
+    page.goto(BASE + '#/crypto')
+    page.locator('#refresh').click()
+    page.wait_for_selector('.toast >> text=Updated 1 price')
+    brow = page.locator('.table tbody tr', has_text='BTC')
+    expect(brow).to_contain_text('₱3,480,000.00')   # 60,000 USDT × 58
+    expect(brow).to_contain_text('Binance')
+    expect(brow).to_contain_text('₱69,600.00')      # 0.02 BTC
+    # a wrong symbol is explained, not silently ignored
+    page.locator('tr', has_text='BTC').locator('a').first.click()
+    page.locator('[data-x="edit"]').click()
+    fill_modal(page, {'price_source_id': 'BTCUSDX'})
+    submit_modal(page)
+    page.goto(BASE + '#/crypto')
+    page.locator('#refresh').click()
+    expect(page.locator('.toast.error').last).to_contain_text('Binance has no pair "BTCUSDX"')
+    page.locator('tr', has_text='BTC').locator('a').first.click()
+    page.locator('[data-x="edit"]').click()
+    fill_modal(page, {'price_source_id': 'BTCUSDT'})
+    submit_modal(page)
+
     # Test E: stock partial sale
     page.goto(BASE + '#/stocks')
     page.locator('[data-x="add"]').first.click()
@@ -170,6 +199,20 @@ with sync_playwright() as p:
     page.locator('[data-g="starter"]').click()
     expect(page.locator('.goal')).to_have_count(3, timeout=8000)
     shot(page, '09-planning')
+
+    # Remove asset: stock with history → confirm → reversed and gone, ledger still reconciles
+    page.goto(BASE + '#/stocks')
+    page.locator('tr', has_text='EXMP').locator('[data-remove]').click()
+    expect(page.locator('.modal')).to_contain_text('2 transactions')
+    fill_modal(page, {'reason': 'smoke test removal'})
+    submit_modal(page, expect_close=False)
+    expect(page.locator('.modal .form-error')).to_contain_text('confirmation')
+    fill_modal(page, {'confirm': True})
+    submit_modal(page)
+    expect(page.locator('.table tbody tr', has_text='EXMP')).to_have_count(0)
+    page.goto(BASE + '#/settings')
+    page.locator('[data-a="integrity"]').click()
+    expect(page.locator('#integrity')).to_contain_text('Ledger reconciles')
 
     # Every page renders (desktop)
     for route in ['dashboard', 'accounts', 'transactions', 'portfolio', 'crypto', 'stocks', 'other', 'reports', 'planning', 'settings']:

@@ -14,7 +14,7 @@ const crypto = require('crypto');
 
 const CLIENT_ID = '1234-abc.apps.googleusercontent.com';
 
-function fakeGas() {
+function fakeGas(singleFile) {
   const props = { GOOGLE_CLIENT_ID: CLIENT_ID, ALLOWED_EMAILS: 'Owner@Example.com' };
   const cacheMap = new Map();
   const spreadsheets = {};
@@ -78,8 +78,14 @@ function fakeGas() {
     },
     CacheService: { getScriptCache: () => ({ get: (k) => cacheMap.get(k) || null, put: (k, v) => cacheMap.set(k, v) }) },
     UrlFetchApp: {
-      fetch: (url) => {
+      fetch: (url, opts) => {
         fetchLog.push(url);
+        if (url.startsWith('https://api.coingecko.com/')) {
+          const hasKey = opts && opts.headers && opts.headers['x-cg-demo-api-key'] === 'demo-key';
+          return hasKey
+            ? { getResponseCode: () => 200, getContentText: () => JSON.stringify({ bitcoin: { php: 3500000, last_updated_at: 1792000000 }, tether: { php: 57.9 } }) }
+            : { getResponseCode: () => 429, getContentText: () => '{}' };
+        }
         const m = /tokeninfo\?id_token=([^&]+)/.exec(url);
         const tok = m && decodeURIComponent(m[1]);
         const claims = tok && Object.values(tokens).find((c) => jwt(c) === tok);
@@ -108,7 +114,8 @@ function fakeGas() {
   vm.createContext(ctx);
   // Load .gs files in reverse-alphabetical order to prove load order does not matter.
   const dir = path.join(__dirname, '..', 'backend');
-  fs.readdirSync(dir).filter((f) => f.endsWith('.gs')).sort().reverse().forEach((f) => vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f }));
+  if (singleFile) vm.runInContext(fs.readFileSync(path.join(dir, 'single-file', 'Code.gs'), 'utf8'), ctx, { filename: 'single-file/Code.gs' });
+  else fs.readdirSync(dir).filter((f) => f.endsWith('.gs')).sort().reverse().forEach((f) => vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f }));
   return { ctx, props, spreadsheets, fetchLog, lockLog, triggers, formulaCount: () => formulaEvaluations, tok: (name) => jwt(tokens[name]) };
 }
 
@@ -195,4 +202,40 @@ test('Misconfigured backend fails closed', () => {
   const r = post(g, { action: 'bootstrap', idToken: g.tok('tok-owner') });
   assert.equal(r.ok, false);
   assert.equal(r.error.code, 'MISCONFIGURED');
+});
+
+test('All-in-one single-file bundle works on its own', () => {
+  const g = fakeGas(true);
+  g.ctx.setupDatabase();
+  assert.equal(g.ctx.selfTest(), 'All checks passed.');
+  assert.equal(post(g, { action: 'bootstrap' }).error.code, 'UNAUTHENTICATED');
+  const r = post(g, { action: 'createAccount', idToken: g.tok('tok-owner'), requestId: rid(), payload: { name: 'GCash', type: 'EWALLET', currency: 'PHP', opening_balance: 1000 } });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  g.ctx.installDailySnapshotTrigger();
+  assert.ok(g.ctx.dailySnapshotJob().count >= 1);
+});
+
+test('Missing SPREADSHEET_ID gives a clear setup message instead of a generic error', () => {
+  const g = fakeGas();
+  const r = post(g, { action: 'health' });
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, 'MISCONFIGURED');
+  assert.match(r.error.message, /run setupDatabase/);
+  const h = JSON.parse(g.ctx.doGet({ parameter: { action: 'health' } }).getContent());
+  assert.match(h.error.message, /SPREADSHEET_ID/);
+});
+
+test('CoinGecko from Apps Script: 429 explained; Demo API key sent server-side and works', () => {
+  const g = fakeGas(true);
+  g.ctx.setupDatabase();
+  const tok = g.tok('tok-owner');
+  assert.equal(post(g, { action: 'createAsset', idToken: tok, requestId: rid(), payload: { name: 'Bitcoin', ticker: 'BTC', asset_class: 'CRYPTO', currency: 'PHP', price_source: 'COINGECKO', price_source_id: 'bitcoin' } }).ok, true);
+  const r1 = post(g, { action: 'refreshPrices', idToken: tok, requestId: rid(), payload: {} });
+  assert.equal(r1.ok, false);
+  assert.match(r1.error.message, /COINGECKO_API_KEY/);
+  g.props.COINGECKO_API_KEY = 'demo-key';
+  const r2 = post(g, { action: 'refreshPrices', idToken: tok, requestId: rid(), payload: {} });
+  assert.equal(r2.ok, true, JSON.stringify(r2));
+  assert.equal(r2.data.prices[0].price, 3500000);
+  assert.equal(r2.data.fx[0].currency, 'USDT');
 });
