@@ -110,12 +110,24 @@ async function start() {
   // Refresh live valuations periodically (prices only change when recorded, but "today" rolls over).
   if (!window.__pwosTimer) window.__pwosTimer = setInterval(() => { if (document.visibilityState === 'visible' && !document.querySelector('.modal-wrap')) reload(); }, 10 * 60 * 1000);
 }
+let autoRefreshing = false;
+/** Refresh Binance/CoinGecko prices on open (and on the periodic reload) when older than 15 minutes. */
+async function autoRefreshPrices() {
+  if (autoRefreshing || store.setting('price_refresh_on_open', 'true') !== 'true') return;
+  const { marketAssets, lastMarketUpdate } = await import('./services/market.js');
+  if (!marketAssets().length || Date.now() - lastMarketUpdate() < 15 * 60 * 1000) return;
+  autoRefreshing = true;
+  try { const { refreshPrices } = await import('./pages/portfolio.js'); await refreshPrices(null, { quiet: true }); }
+  finally { autoRefreshing = false; }
+}
+
 async function reload(manual) {
   const main = $('#main');
   if (!store.data) mount(main, html`<div class="page">${loadingBlock(5)}</div>`);
   try {
     await store.load();
     Settings.applyTheme(store.setting('theme', 'dark'));
+    autoRefreshPrices();
     if (manual) toast('Data reloaded');
   } catch (e) {
     if (e.code === 'UNAUTHENTICATED' || e.code === 'FORBIDDEN') return signInScreen(errorMessage(e));

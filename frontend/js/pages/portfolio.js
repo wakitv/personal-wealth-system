@@ -5,7 +5,7 @@ import { dataTable, emptyState, statCard, chart, chartBox, cssVar, toast, errorM
 import { assetForm, assetTxForm, priceForm, valuationForm, assetTransferForm, cashTxForm, removeAssetForm } from '../components/forms.js';
 import { txColumns } from './transactions.js';
 import { qualityBanner } from './dashboard.js';
-import { api } from '../services/api.js';
+import { refreshMarketPrices, marketAssets } from '../services/market.js';
 const Core = window.WealthCore;
 
 const CLASS = { CRYPTO: { title: 'Crypto', route: 'crypto', noun: 'crypto asset' }, STOCK: { title: 'Stocks', route: 'stocks', noun: 'stock' }, OTHER: { title: 'Other assets', route: 'other', noun: 'asset' } };
@@ -19,7 +19,7 @@ function rowsFor(cls) {
 function priceCell(r) {
   if (r.valuedAtCost) return html`<span class="muted">No price</span> ${F.badge('at cost', 'warn')}`;
   if (r.price === null) return html`<span class="muted">—</span>`;
-  const src = { MANUAL: 'manual', VALUATION: 'estimate', COINGECKO: 'CoinGecko', LAST_TRADE: 'last trade' }[r.priceSource] || r.priceSource;
+  const src = { MANUAL: 'manual', VALUATION: 'estimate', COINGECKO: 'CoinGecko', BINANCE: 'Binance', LAST_TRADE: 'last trade' }[r.priceSource] || r.priceSource;
   return html`<div>${F.money(r.price, r.priceCurrency)}</div><div class="xs muted">${src} · ${F.ago(r.priceAsOf)}${r.stale ? html` ${F.badge('stale', 'warn')}` : ''}${r.isEstimate ? html` ${F.badge('estimate', 'info')}` : ''}</div>`;
 }
 function holdingColumns(cls, total) {
@@ -49,7 +49,7 @@ export function render(root, params, route) {
   const rows = rowsFor(cls);
   const total = cls === 'CRYPTO' ? s.crypto : cls === 'STOCK' ? s.stock : s.other;
   const cost = rows.reduce((a, r) => a + r.costBase, 0), unr = rows.reduce((a, r) => a + r.unrealizedBase, 0), rea = rows.reduce((a, r) => a + r.realizedBase, 0), inc = rows.reduce((a, r) => a + r.incomeBase, 0), fees = rows.reduce((a, r) => a + r.feesBase, 0);
-  const canRefresh = cls === 'CRYPTO' && api.mode === 'remote' && store.data.assets.some((a) => a.price_source === 'COINGECKO');
+  const canRefresh = cls === 'CRYPTO' && marketAssets().length > 0;
   mount(root, html`
     <div class="page-head"><div><h1>${meta.title}</h1><p class="muted">Weighted-average cost. ${cls === 'OTHER' ? 'Manual valuations are labelled as estimates.' : 'Prices show their source and age.'}</p></div>
       <div class="head-actions wrap">${canRefresh ? html`<button class="btn" id="refresh">${F.icon('refresh')} Refresh prices</button>` : ''}
@@ -83,13 +83,14 @@ export function render(root, params, route) {
   };
 }
 
-export async function refreshPrices(btn) {
-  btn.disabled = true; btn.classList.add('loading');
+export async function refreshPrices(btn, { quiet = false } = {}) {
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
   try {
-    const r = await store.write('refreshPrices', {});
-    toast(`Updated ${r.prices.length} price${r.prices.length === 1 ? '' : 's'}${r.fx.length ? ' and ' + r.fx.length + ' FX rate(s)' : ''}${r.skipped?.length ? ' · skipped ' + r.skipped.join(', ') : ''}`);
-  } catch (err) { toast(errorMessage(err), 'error', 7000); }
-  finally { btn.disabled = false; btn.classList.remove('loading'); }
+    const r = await refreshMarketPrices();
+    const extra = [...r.skipped, ...r.errors];
+    if (!quiet || extra.length) toast(`Updated ${r.updated} price${r.updated === 1 ? '' : 's'}${r.fx ? ' and ' + r.fx + ' FX rate' + (r.fx === 1 ? '' : 's') : ''}${extra.length ? ' · ' + extra.join(' · ') : ''}`, extra.length ? 'error' : 'ok', extra.length ? 9000 : 4200);
+  } catch (err) { toast(errorMessage(err), 'error', 9000); }
+  finally { if (btn) { btn.disabled = false; btn.classList.remove('loading'); } }
 }
 
 function renderOverview(root) {
@@ -138,7 +139,7 @@ function renderAsset(root, id) {
   const archived = a.status === 'ARCHIVED';
   mount(root, html`
     <div class="page-head"><div><a class="back sm" href="#/${meta.route}">← ${meta.title}</a><h1>${a.ticker ? a.ticker + ' · ' : ''}${a.name}</h1>
-      <p class="muted">${[cls === 'OTHER' ? (a.category || '').toLowerCase() : meta.title.replace(/s$/, ''), a.network, a.exchange, 'priced in ' + a.currency, a.price_source === 'COINGECKO' ? 'CoinGecko: ' + a.price_source_id : 'manual prices'].filter(Boolean).join(' · ')}${archived ? ' · archived' : ''}</p></div>
+      <p class="muted">${[cls === 'OTHER' ? (a.category || '').toLowerCase() : meta.title.replace(/s$/, ''), a.network, a.exchange, 'priced in ' + a.currency, a.price_source === 'COINGECKO' ? 'CoinGecko: ' + a.price_source_id : a.price_source === 'BINANCE' ? 'Binance: ' + a.price_source_id : 'manual prices'].filter(Boolean).join(' · ')}${archived ? ' · archived' : ''}</p></div>
       <div class="head-actions wrap">${archived ? '' : html`<button class="btn sm" data-x="buy">${cls === 'OTHER' ? 'Add to position' : 'Buy'}</button>${r.qty ? html`<button class="btn sm" data-x="sell">${cls === 'OTHER' ? 'Reduce' : 'Sell'}</button><button class="btn sm" data-x="move">Move</button>` : ''}<button class="btn sm" data-x="income">Income</button><button class="btn sm" data-x="price">${cls === 'OTHER' ? 'Update valuation' : 'Update price'}</button><button class="btn sm" data-x="addpos">Add existing</button>`}
         <button class="btn sm ghost" data-x="edit">Edit</button><button class="btn sm ghost" data-x="archive">${archived ? 'Restore' : 'Archive'}</button><button class="btn sm danger" data-x="remove">${F.icon('trash')} Remove</button></div></div>
     <section class="grid g5">

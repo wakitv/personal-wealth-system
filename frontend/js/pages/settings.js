@@ -6,6 +6,7 @@ import { auth } from '../services/auth.js';
 import { dataTable, toast, errorMessage, confirmDialog, loadingBlock } from '../components/ui.js';
 import { fxForm } from '../components/forms.js';
 import { refreshPrices } from './portfolio.js';
+import { marketAssets, lastMarketUpdate } from '../services/market.js';
 const Core = window.WealthCore;
 
 export function render(root) {
@@ -33,8 +34,8 @@ export function render(root) {
         <label class="field"><span>Concentration warning (%)</span><input name="concentration_threshold" inputmode="decimal" value="${s.concentration_threshold}"></label>
         <label class="field"><span>Inflation assumption (%/yr)</span><input name="inflation_rate" inputmode="decimal" value="${s.inflation_rate}"></label>
         <label class="field"><span>Account references</span>${sel('mask_references', [['true', 'Masked (•••• 1234)'], ['false', 'Shown in full']])}</label>
-        <label class="field"><span>Daily automatic price refresh</span>${sel('price_auto_refresh', [['false', 'Off — manual prices'], ['true', 'On — CoinGecko before nightly snapshot']])}</label>
-        <label class="field wide"><span>CoinGecko IDs for FX currencies (JSON)</span><input name="coingecko_fx_ids" value="${s.coingecko_fx_ids}"><small>Used only by “Refresh prices”. Example: {"USDT":"tether"}</small></label>
+        <label class="field"><span>Update Binance / CoinGecko prices</span>${sel('price_refresh_on_open', [['true', 'Automatically when I open the app'], ['false', 'Only when I click Refresh prices']])}<small>Fetched by your browser, at most every 15 minutes</small></label>
+        <label class="field wide"><span>CoinGecko IDs for FX currencies (JSON)</span><input name="coingecko_fx_ids" value="${s.coingecko_fx_ids}"><small>USDT/USDC → ${store.base} rates fetched with prices. Example: {"USDT":"tether"}</small></label>
         <div class="wide"><button class="btn primary" type="submit">Save preferences</button></div>
       </form></section>
 
@@ -43,8 +44,8 @@ export function render(root) {
         ${usedCur.filter((c) => !fxLatest[c] && !store.latestFx(c)).length ? html`<div class="banner warn sm">${F.icon('alert')}<div>No rate recorded for ${usedCur.filter((c) => !fxLatest[c] && !store.latestFx(c)).join(', ')} — balances in these currencies are excluded from totals.</div></div>` : ''}
         <div id="fx-table"></div></div>
       <div class="card"><div class="card-head"><h3>Prices</h3></div>
-        <p class="sm muted">Manual prices are entered on each asset. Crypto assets set to CoinGecko can be refreshed by the backend (no API key; read-only market data). Every price keeps its source and timestamp.</p>
-        ${api.mode === 'remote' ? html`<button class="btn" id="refresh">${F.icon('refresh')} Refresh CoinGecko prices now</button>` : html`<p class="muted sm">Automatic prices need the Apps Script backend (not available in sandbox).</p>`}
+        <p class="sm muted">Crypto set to <strong>Binance</strong> (symbol, e.g. BTCUSDT) or <strong>CoinGecko</strong> (ID, e.g. bitcoin) is priced automatically. Your browser fetches the public prices — Binance blocks Google's servers — and the backend saves them. Stocks and other assets use manual prices. Every price keeps its source and timestamp.</p>
+        ${marketAssets().length ? html`<button class="btn" id="refresh">${F.icon('refresh')} Refresh prices now</button> <span class="muted xs">${lastMarketUpdate() ? 'Last update ' + F.dateTime(lastMarketUpdate()) : 'Not fetched yet'}</span>` : html`<p class="muted sm">No assets use an automatic price source yet. Edit a crypto asset and choose Binance or CoinGecko.</p>`}
         <h4>Daily snapshots</h4>
         <p class="sm">${snaps.length ? html`${snaps.length} snapshots · ${F.dateStr(snaps[0].snapshot_date)} → ${F.dateStr(snaps[snaps.length - 1].snapshot_date)}` : 'No snapshots yet.'} ${api.mode === 'remote' ? 'The nightly trigger (installDailySnapshotTrigger) takes one automatically.' : 'In sandbox mode, take snapshots manually.'}</p>
         <div class="btn-row"><button class="btn sm" data-a="snap">Take today’s snapshot</button></div>

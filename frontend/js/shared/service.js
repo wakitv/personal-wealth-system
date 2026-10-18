@@ -38,7 +38,7 @@ function createWealthService(Core) {
     allocation_targets: '{"CASH":15,"CRYPTO":25,"STOCK":30,"BUSINESS":15,"PROPERTY":10,"OTHER":5}',
     scenario_returns: '{"conservative":4,"base":8,"optimistic":12}', inflation_rate: '4',
     emergency_monthly_expenses: '0', emergency_target_months: '6', emergency_accounts: '[]',
-    price_auto_refresh: 'false', coingecko_fx_ids: '{"USDT":"tether","USDC":"usd-coin"}',
+    price_auto_refresh: 'false', price_refresh_on_open: 'true', coingecko_fx_ids: '{"USDT":"tether","USDC":"usd-coin"}',
     mask_references: 'true'
   };
   var SETTING_RULES = {
@@ -47,7 +47,7 @@ function createWealthService(Core) {
     reconcile_default: /^(FLOW|NON_FLOW)$/, stale_price_days: /^\d{1,3}$/, concentration_threshold: /^\d{1,3}(\.\d+)?$/,
     allocation_targets: 'json', scenario_returns: 'json', inflation_rate: /^-?\d{1,2}(\.\d+)?$/,
     emergency_monthly_expenses: /^\d{1,12}(\.\d{1,2})?$/, emergency_target_months: /^\d{1,3}$/, emergency_accounts: 'json',
-    price_auto_refresh: /^(true|false)$/, coingecko_fx_ids: 'json', mask_references: /^(true|false)$/
+    price_auto_refresh: /^(true|false)$/, price_refresh_on_open: /^(true|false)$/, coingecko_fx_ids: 'json', mask_references: /^(true|false)$/
   };
 
   // ------------------------------------------------------------------ errors / responses
@@ -345,7 +345,22 @@ function createWealthService(Core) {
   } };
 
   // ---- assets
-  function assetFields(p, ctx, isNew) {
+  var PRICE_SOURCES = ['MANUAL', 'BINANCE', 'COINGECKO'];
+  var MARKET_SOURCES = ['BINANCE', 'COINGECKO'];
+  /** Binance symbol (BTCUSDT; a TradingView-style "BINANCE:BTCUSDT" is accepted) or CoinGecko ID (bitcoin). */
+  function normalizeSourceId(src, raw) {
+    var v = String(raw || '').trim();
+    if (src === 'MANUAL') return '';
+    if (src === 'BINANCE') {
+      v = v.toUpperCase().replace(/^BINANCE:/, '').replace(/[\/\-\s]/g, '');
+      if (!/^[A-Z0-9]{5,20}$/.test(v)) fail('VALIDATION', 'Enter the Binance trading pair symbol, e.g. BTCUSDT', { field: 'price_source_id' });
+      return v;
+    }
+    v = v.toLowerCase();
+    if (!/^[a-z0-9-]{2,80}$/.test(v)) fail('VALIDATION', 'Enter the CoinGecko ID, e.g. bitcoin', { field: 'price_source_id' });
+    return v;
+  }
+  function assetFields(p, ctx, isNew, existing) {
     var o = {};
     if (isNew || p.name !== undefined) o.name = str(p.name, 'name', { required: true, max: 80 });
     if (isNew || p.ticker !== undefined) o.ticker = str(p.ticker, 'ticker', { max: 20 }).toUpperCase();
@@ -355,8 +370,12 @@ function createWealthService(Core) {
     if (isNew || p.network !== undefined) o.network = str(p.network, 'network', { max: 40 });
     if (isNew || p.currency !== undefined) o.currency = currencyCode(p.currency || settings(ctx).base_currency, 'currency');
     if (isNew || p.unit_label !== undefined) o.unit_label = str(p.unit_label, 'unit_label', { max: 20 });
-    if (isNew || p.price_source !== undefined) o.price_source = p.price_source ? oneOf(p.price_source, ['MANUAL', 'COINGECKO'], 'price_source') : 'MANUAL';
-    if (isNew || p.price_source_id !== undefined) o.price_source_id = str(p.price_source_id, 'price_source_id', { max: 80, pattern: /^[a-z0-9-]*$/ });
+    if (isNew || p.price_source !== undefined) o.price_source = p.price_source ? oneOf(p.price_source, PRICE_SOURCES, 'price_source') : 'MANUAL';
+    if (isNew || p.price_source !== undefined || p.price_source_id !== undefined) {
+      var src = o.price_source || (existing && existing.price_source) || 'MANUAL';
+      var rawId = p.price_source_id !== undefined ? p.price_source_id : (existing && existing.price_source_id) || '';
+      o.price_source_id = normalizeSourceId(src, rawId);
+    }
     if (isNew || p.notes !== undefined) o.notes = str(p.notes, 'notes', { max: 1000 });
     if (o.notes && /seed|mnemonic|private key|password/i.test(o.notes)) fail('VALIDATION', 'Never store passwords, seed phrases or private keys here.');
     return o;
@@ -376,7 +395,7 @@ function createWealthService(Core) {
     var a = getAsset(ctx, p.asset_id);
     checkVersion(a, p.expected_updated_at);
     var before = JSON.parse(JSON.stringify(a));
-    var patch = assetFields(p, ctx, false);
+    var patch = assetFields(p, ctx, false, a);
     if (patch.currency && patch.currency !== a.currency) {
       var priced = ctx.read('PriceHistory').some(function (r) { return r.asset_id === a.asset_id; });
       if (priced) fail('VALIDATION', 'Price currency cannot change after prices are recorded');
@@ -599,6 +618,38 @@ function createWealthService(Core) {
     ctx.invalidate('PriceHistory'); ctx.invalidate('FXRates');
     ctx.audit('REFRESH', 'Prices', 'coingecko', null, { prices: prices.length, fx: fxRows.length, skipped: skipped });
     return { prices: prices, fx: fxRows, skipped: skipped };
+  } };
+
+  /**
+   * Save a batch of market quotes fetched by the signed-in user's browser (Binance and CoinGecko
+   * block or throttle Google's servers, so the browser fetches and this records). One request,
+   * one lock, one audit entry. Each quote must be in the asset's own price currency.
+   */
+  A.recordPrices = { write: true, fn: function (p, ctx) {
+    var base = settings(ctx).base_currency;
+    var inP = Array.isArray(p.prices) ? p.prices : [], inF = Array.isArray(p.fx) ? p.fx : [];
+    if (!inP.length && !inF.length) fail('VALIDATION', 'No prices to record');
+    if (inP.length > 300 || inF.length > 50) fail('VALIDATION', 'Too many prices in one request');
+    var seen = {};
+    var prices = inP.map(function (q, i) {
+      var a = getAsset(ctx, q.asset_id, true);
+      if (seen[a.asset_id]) fail('VALIDATION', 'Duplicate price for ' + (a.ticker || a.name));
+      seen[a.asset_id] = 1;
+      var source = oneOf(q.source, MARKET_SOURCES, 'prices[' + i + '].source');
+      var cur = currencyCode(q.currency, 'prices[' + i + '].currency');
+      if (cur !== a.currency) fail('VALIDATION', (a.ticker || a.name) + ': price must be in ' + a.currency + ' (got ' + cur + ')');
+      return { price_id: ctx.id('PRC'), asset_id: a.asset_id, price: amount(q.price, 'price', { required: true, positive: true }), currency: cur, as_of: isoTime(q.as_of || ctx.nowIso, 'as_of', ctx.nowMs), source: source, is_estimate: false, notes: str(q.notes, 'notes', { max: 300 }), created_at: ctx.nowIso };
+    });
+    var fx = inF.map(function (r, i) {
+      var cur = currencyCode(r.currency, 'fx[' + i + '].currency');
+      if (cur === base) fail('VALIDATION', 'The base currency always has a rate of 1');
+      return { fx_id: ctx.id('FX'), currency: cur, rate: amount(r.rate, 'rate', { required: true, positive: true }), as_of: isoTime(r.as_of || ctx.nowIso, 'as_of', ctx.nowMs), source: str(r.source, 'source', { max: 40 }) || 'MARKET', created_at: ctx.nowIso };
+    });
+    if (prices.length) ctx.deps.store.append('PriceHistory', prices);
+    if (fx.length) ctx.deps.store.append('FXRates', fx);
+    ctx.invalidate('PriceHistory'); ctx.invalidate('FXRates');
+    ctx.audit('REFRESH', 'Prices', 'browser', null, { prices: prices.length, fx: fx.length, sources: prices.map(function (x) { return x.source; }).filter(function (v, i, arr) { return arr.indexOf(v) === i; }) });
+    return { prices: prices, fx: fx };
   } };
 
   // ---- settings
