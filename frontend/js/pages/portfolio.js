@@ -13,8 +13,19 @@ const CLASS = { CRYPTO: { title: 'Crypto', route: 'crypto', noun: 'crypto asset'
 function rowsFor(cls) {
   const st = store.live;
   const by = new Map(st.byAsset.map((a) => [a.asset_id, a]));
+  const market = Core.buildMarket(store.coreData(), store.base);
+  const staleMs = Number(store.setting('stale_price_days', 3)) * 864e5;
   return store.data.assets.filter((a) => a.status !== 'REMOVED' && (!cls || a.asset_class === cls) && (a.status !== 'ARCHIVED' || by.get(a.asset_id)?.qty))
-    .map((a) => ({ ...(by.get(a.asset_id) || { qty: 0, costBase: 0, valueBase: 0, unrealizedBase: 0, realizedBase: 0, incomeBase: 0, feesBase: 0, locations: [], price: null }), asset: a, asset_id: a.asset_id, name: a.name, ticker: a.ticker }));
+    .map((a) => {
+      const row = { ...(by.get(a.asset_id) || { qty: 0, costBase: 0, valueBase: 0, unrealizedBase: 0, realizedBase: 0, incomeBase: 0, feesBase: 0, locations: [], price: null }), asset: a, asset_id: a.asset_id, name: a.name, ticker: a.ticker };
+      // Show the latest recorded price even when nothing is held (positions only carry a price when qty > 0).
+      if (row.price === null || row.price === undefined) {
+        const list = market.prices[a.asset_id] || [];
+        const lp = list.length ? list[list.length - 1] : null;
+        if (lp) Object.assign(row, { price: lp.price, priceCurrency: lp.currency, priceAsOf: lp.t, priceSource: lp.source, isEstimate: lp.is_estimate, stale: Date.now() - lp.t > staleMs, valuedAtCost: false });
+      }
+      return row;
+    });
 }
 function priceCell(r) {
   if (r.valuedAtCost) return html`<span class="muted">No price</span> ${F.badge('at cost', 'warn')}`;

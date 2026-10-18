@@ -149,6 +149,20 @@ with sync_playwright() as p:
     expect(brow).to_contain_text('₱3,480,000.00')   # 60,000 USDT × 58
     expect(brow).to_contain_text('Binance')
     expect(brow).to_contain_text('₱69,600.00')      # 0.02 BTC
+    # a coin you don't hold yet still shows its fetched price
+    page.locator('[data-x="add"]').first.click()
+    fill_modal(page, {'name': 'Ether', 'ticker': 'ETH', 'currency': 'PHP', 'price_source': 'BINANCE'})
+    page.locator('.modal [name="price_source"]').dispatch_event('change')
+    fill_modal(page, {'price_source_id': 'ETHUSDT'})
+    submit_modal(page, expect_close=False)
+    page.wait_for_selector('.modal >> text=Record purchase')
+    page.locator('.modal [data-close]').first.click()
+    expect(page.locator('.modal-wrap')).to_have_count(0)
+    page.locator('#refresh').click()
+    page.wait_for_selector('.toast >> text=Updated 2 prices')
+    erow = page.locator('.table tbody tr', has_text='ETH')
+    expect(erow).to_contain_text('₱145,000.00')   # 2,500 USDT × 58, quantity 0
+    expect(erow).to_contain_text('Binance')
     # a wrong symbol is explained, not silently ignored
     page.locator('tr', has_text='BTC').locator('a').first.click()
     page.locator('[data-x="edit"]').click()
